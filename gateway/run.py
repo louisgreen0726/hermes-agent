@@ -12799,7 +12799,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             cached_sources = OrderedDict()
             self._session_sources = cached_sources
         try:
-            cached_sources[session_key] = dataclasses.replace(source)
+            cached_source = dataclasses.replace(source)
+            # Native Telegram guest query IDs and their intake authorization
+            # are one-shot live-turn state. Keeping them in the source LRU
+            # could misroute a later background/process notification through an
+            # already-consumed answerGuestQuery route.
+            if getattr(cached_source, "telegram_guest_query_id", None):
+                cached_source.telegram_guest_query_id = None
+                cached_source.telegram_guest_authorized = False
+            cached_sources[session_key] = cached_source
         except Exception:
             logger.debug("Failed to cache live session source for %s", session_key, exc_info=True)
             return
@@ -16779,6 +16787,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if team_id:
                 metadata = dict(metadata or {})
                 metadata["slack_team_id"] = str(team_id)
+        if getattr(source, "platform", None) == Platform.TELEGRAM:
+            guest_query_id = getattr(source, "telegram_guest_query_id", None)
+            if guest_query_id:
+                metadata = dict(metadata or {})
+                metadata["telegram_guest_query_id"] = str(guest_query_id)
         return metadata
 
     def _thread_metadata_for_target(
@@ -19802,6 +19815,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if _plat_streaming is None
             else bool(_plat_streaming)
         )
+        if (
+            source.platform == Platform.TELEGRAM
+            and getattr(source, "telegram_guest_query_id", None)
+        ):
+            _streaming_enabled = False
 
         _thread_metadata: Optional[Dict[str, Any]] = self._thread_metadata_for_source(source, event_message_id)
 
@@ -20298,7 +20316,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Disable tool progress for webhooks - they don't support message editing,
         # so each progress line would be sent as a separate message.
         from gateway.config import Platform
-        tool_progress_enabled = progress_mode not in {"off", "log"} and source.platform != Platform.WEBHOOK
+        _native_telegram_guest = bool(
+            source.platform == Platform.TELEGRAM
+            and getattr(source, "telegram_guest_query_id", None)
+        )
+        tool_progress_enabled = (
+            progress_mode not in {"off", "log"}
+            and source.platform != Platform.WEBHOOK
+            and not _native_telegram_guest
+        )
         # Live working-state status for text-rendering typing indicators
         # (Slack's assistant status line). Independent of tool_progress —
         # Slack defaults tool_progress off (permanent lines spam channels)
@@ -20316,7 +20342,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _live_status_adapter = None
         # "log" mode: tool calls are written to ~/.hermes/logs/tool_calls.log
         # instead of the chat (#3459 / #3458). Gateway-only by design.
-        log_mode_enabled = progress_mode == "log" and source.platform != Platform.WEBHOOK
+        log_mode_enabled = (
+            progress_mode == "log"
+            and source.platform != Platform.WEBHOOK
+            and not _native_telegram_guest
+        )
         log_queue: "queue.Queue | None" = queue.Queue() if log_mode_enabled else None
         # Natural assistant status messages are intentionally independent from
         # tool progress and token streaming. Users can keep tool_progress quiet
@@ -20329,6 +20359,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         interim_assistant_messages_enabled = (
             source.platform != Platform.WEBHOOK
             and interim_assistant_messages_mode != "off"
+            and not _native_telegram_guest
         )
         # thinking_progress is independent — if enabled, we need the progress
         # queue even when tool_progress is off (thinking relay uses same infra).
@@ -20339,7 +20370,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             default=False,
             require_platform_override_for={Platform.MATTERMOST},
         )
-        _thinking_enabled = _thinking_mode != "off"
+        _thinking_enabled = _thinking_mode != "off" and not _native_telegram_guest
         needs_progress_queue = tool_progress_enabled or _thinking_enabled
 
 
@@ -21159,7 +21190,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 logger.debug("event_callback hook error: %s", _e)
 
         # Bridge sync status_callback → async adapter.send for context pressure
-        _status_adapter = self._adapter_for_source(source)
+        _status_adapter = (
+            None if _native_telegram_guest else self._adapter_for_source(source)
+        )
         _status_chat_id = source.chat_id
         if source.platform == Platform.FEISHU and source.thread_id and event_message_id:
             # Feishu topics only keep messages inside the topic when they are
@@ -21312,6 +21345,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 if _plat_streaming is None
                 else bool(_plat_streaming)
             )
+            if _native_telegram_guest:
+                _streaming_enabled = False
             _want_stream_deltas = _streaming_enabled
             _want_interim_messages = interim_assistant_messages_enabled
             _want_interim_consumer = _want_interim_messages

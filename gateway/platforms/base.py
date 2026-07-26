@@ -73,6 +73,10 @@ def _thread_metadata_for_source(source, reply_to_message_id: str | None = None) 
         scope_id = getattr(source, "scope_id", None)
         if scope_id:
             metadata["slack_team_id"] = str(scope_id)
+    if _platform_name(getattr(source, "platform", None)) == "telegram":
+        guest_query_id = getattr(source, "telegram_guest_query_id", None)
+        if guest_query_id:
+            metadata["telegram_guest_query_id"] = str(guest_query_id)
     if not metadata:
         return None
     if _platform_name(getattr(source, "platform", None)) == "telegram" and getattr(source, "chat_type", None) == "dm":
@@ -5170,6 +5174,9 @@ class BasePlatformAdapter(ABC):
             if not response:
                 logger.debug("[%s] Handler returned empty/None response for %s", self.name, event.source.chat_id)
             if response:
+                _native_telegram_guest = bool(
+                    getattr(event.source, "telegram_guest_query_id", None)
+                )
                 # Capture [[as_document]] before extract_media strips it, so the
                 # dispatch partition below can route image-extension files
                 # through send_document instead of send_multiple_images. Used
@@ -5204,6 +5211,21 @@ class BasePlatformAdapter(ABC):
                     local_files = self.filter_local_delivery_paths(local_files)
                     if local_files:
                         logger.info("[%s] extract_local_files found %d file(s) in response", self.name, len(local_files))
+
+                if _native_telegram_guest and (images or local_files or media_files):
+                    # Native Guest Mode answers are one-shot text results. An
+                    # ordinary attachment API cannot target a chat the bot has
+                    # not joined, so consume all attachment directives before
+                    # the generic media-delivery phase.
+                    attachment_note = (
+                        "Attachment delivery is unavailable in Telegram Guest Mode."
+                    )
+                    text_content = "\n\n".join(
+                        part for part in (text_content, attachment_note) if part
+                    )
+                    images = []
+                    local_files = []
+                    media_files = []
 
                 # A2 (#29346): extraction can reduce a non-empty response to
                 # empty text with no attachment, and the `if text_content` guard
@@ -5301,9 +5323,13 @@ class BasePlatformAdapter(ABC):
                     # Slash-command and ephemeral replies are cheap to
                     # regenerate and are not recorded.
                     _obligation_id = None
-                    if not is_ephemeral_response and not str(
-                        event.text or ""
-                    ).lstrip().startswith(("/", self.typed_command_prefix or "!")):
+                    if (
+                        not _native_telegram_guest
+                        and not is_ephemeral_response
+                        and not str(event.text or "").lstrip().startswith(
+                            ("/", self.typed_command_prefix or "!")
+                        )
+                    ):
                         try:
                             from gateway.delivery_ledger import (
                                 compute_obligation_id,

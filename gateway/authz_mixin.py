@@ -399,6 +399,17 @@ class GatewayAuthorizationMixin:
         ):
             return True
 
+        # Telegram native Guest Mode is intake-authorized by the adapter's
+        # fail-closed guest_allow_from list. Both fields are live-only and are
+        # deliberately omitted from SessionSource serialization, so persisted
+        # or relay-supplied sources cannot forge this bypass.
+        if (
+            source.platform == Platform.TELEGRAM
+            and getattr(source, "telegram_guest_query_id", None)
+            and getattr(source, "telegram_guest_authorized", False) is True
+        ):
+            return True
+
         user_id = source.user_id
 
         # Telegram (and similar) authorize entire group/forum/channel chats

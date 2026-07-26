@@ -113,6 +113,40 @@ class TestProducerHook:
         assert _rows() == []
 
     @pytest.mark.asyncio
+    async def test_one_shot_telegram_guest_reply_not_recorded_for_replay(self):
+        adapter = _Adapter()
+        event = _event()
+        event.source.platform = Platform.TELEGRAM
+        event.source.telegram_guest_query_id = "guest-query-1"
+        event.source.telegram_guest_authorized = True
+
+        await _run(adapter, event)
+
+        assert adapter.sent == ["final answer"]
+        assert _rows() == []
+
+    @pytest.mark.asyncio
+    async def test_one_shot_telegram_guest_media_degrades_to_same_text_reply(self):
+        adapter = _Adapter()
+        adapter.send_multiple_images = AsyncMock()
+        event = _event()
+        event.source.platform = Platform.TELEGRAM
+        event.source.telegram_guest_query_id = "guest-query-1"
+        event.source.telegram_guest_authorized = True
+
+        await _run(
+            adapter,
+            event,
+            response="Summary\n\n![chart](https://example.com/chart.png)",
+        )
+
+        assert adapter.sent == [
+            "Summary\n\nAttachment delivery is unavailable in Telegram Guest Mode."
+        ]
+        adapter.send_multiple_images.assert_not_awaited()
+        assert _rows() == []
+
+    @pytest.mark.asyncio
     async def test_empty_response_not_recorded(self):
         adapter = _Adapter()
         await _run(adapter, _event(), response="")

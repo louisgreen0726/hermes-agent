@@ -1070,6 +1070,36 @@ With `guest_mode: true`, a message from a non-allowlisted group is processed **o
 
 DMs and allowlisted groups behave exactly as before.
 
+### Native Guest Mode (`native_guest_mode`)
+
+Telegram Bot API 10.0 also has a separate, native **Guest Mode** that lets a
+user summon a bot in a chat where the bot is not a member. Do not confuse it
+with Hermes' older `guest_mode` allowlist bypass above.
+
+First, enable Guest Mode for the bot in [@BotFather](https://t.me/BotFather).
+Then enable the Hermes adapter and restrict who may summon it:
+
+```yaml
+telegram:
+  extra:
+    native_guest_mode: true
+    guest_allow_from:
+      - "123456789"  # Telegram user ID of the owner
+```
+
+Environment equivalent:
+
+```bash
+TELEGRAM_NATIVE_GUEST_MODE=true
+TELEGRAM_GUEST_ALLOWED_USERS=123456789
+```
+
+If `guest_allow_from` / `TELEGRAM_GUEST_ALLOWED_USERS` is omitted, Hermes
+falls back to `allow_from` and then `TELEGRAM_ALLOWED_USERS`. If none is set,
+native guest queries fail closed. Guest replies are one-shot text responses:
+Telegram does not provide ordinary chat membership, typing indicators,
+streaming edits, follow-up messages, or attachment delivery through this path.
+
 ## Slash Command Access Control
 
 By default, every allowed user can run every slash command. To split your allowlist into **admins** (full slash command access) and **regular users** (only commands you explicitly enable), add `allow_admin_from` and `user_allowed_commands` to the platform's `extra` block:

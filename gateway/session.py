@@ -191,6 +191,14 @@ class SessionSource:
     auto_thread_created: bool = False
     auto_thread_initial_name: Optional[str] = None
 
+    # Internal, wire-INVISIBLE one-shot Telegram Guest Mode route. Guest query
+    # IDs expire after one answer and must never survive a restart or be reused
+    # by cron/resume delivery, so this is deliberately omitted from
+    # to_dict()/from_dict(). The live inbound source carries it only until the
+    # current response is delivered through answerGuestQuery.
+    telegram_guest_query_id: Optional[str] = None
+    telegram_guest_authorized: bool = False
+
     # Internal, wire-INVISIBLE trust signal: True when this event was delivered
     # to the gateway over the per-instance-authenticated relay WebSocket (the
     # Team Gateway connector). The connector authenticates the gateway's socket

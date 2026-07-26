@@ -18,6 +18,7 @@ import html as _html
 import re
 import threading
 import time
+import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Any
@@ -227,6 +228,7 @@ try:
         CommandHandler,
         CallbackQueryHandler,
         MessageHandler as TelegramMessageHandler,
+        TypeHandler,
         ContextTypes,
         filters,
     )
@@ -245,6 +247,7 @@ except ImportError:
     CommandHandler = Any
     CallbackQueryHandler = Any
     TelegramMessageHandler = Any
+    TypeHandler = Any
     HTTPXRequest = Any
     filters = None
     ParseMode = None
@@ -278,6 +281,7 @@ from gateway.platforms.base import (
     SUPPORTED_DOCUMENT_TYPES,
     SUPPORTED_IMAGE_DOCUMENT_TYPES,
     _TEXT_INJECT_EXTENSIONS,
+    _prefix_within_utf16_limit,
     utf16_len,
 )
 from plugins.platforms.telegram.telegram_ids import (
@@ -385,7 +389,7 @@ def check_telegram_requirements() -> bool:
     """
     global TELEGRAM_AVAILABLE, Update, Bot, Message, InlineKeyboardButton
     global InlineKeyboardMarkup, LinkPreviewOptions, Application
-    global CommandHandler, CallbackQueryHandler, TelegramMessageHandler
+    global CommandHandler, CallbackQueryHandler, TelegramMessageHandler, TypeHandler
     global ContextTypes, filters, ParseMode, ChatType, HTTPXRequest
     if TELEGRAM_AVAILABLE:
         return True
@@ -405,7 +409,7 @@ def check_telegram_requirements() -> bool:
             Application as _App, CommandHandler as _CH,
             CallbackQueryHandler as _CQH,
             MessageHandler as _MH,
-            ContextTypes as _CT, filters as _filters,
+            TypeHandler as _TH, ContextTypes as _CT, filters as _filters,
         )
         from telegram.constants import ParseMode as _PM, ChatType as _CtT
         from telegram.request import HTTPXRequest as _HR
@@ -421,6 +425,7 @@ def check_telegram_requirements() -> bool:
     CommandHandler = _CH
     CallbackQueryHandler = _CQH
     TelegramMessageHandler = _MH
+    TypeHandler = _TH
     ContextTypes = _CT
     filters = _filters
     ParseMode = _PM
@@ -896,6 +901,147 @@ class TelegramAdapter(BasePlatformAdapter):
         if (metadata or {}).get("notify"):
             return {}
         return {"disable_notification": True}
+
+    def _telegram_native_guest_mode(self) -> bool:
+        """Return whether Telegram Bot API 10.0 native Guest Mode is enabled."""
+        configured = self.config.extra.get("native_guest_mode")
+        if configured is not None:
+            if isinstance(configured, str):
+                return configured.lower() in {"true", "1", "yes", "on"}
+            return bool(configured)
+        return os.getenv("TELEGRAM_NATIVE_GUEST_MODE", "false").lower() in {
+            "true", "1", "yes", "on",
+        }
+
+    def _telegram_native_guest_allow_from(self) -> set[str]:
+        """Resolve the fail-closed caller allowlist for native guest queries."""
+        configured = self.config.extra.get("guest_allow_from")
+        if configured is None:
+            configured = os.getenv("TELEGRAM_GUEST_ALLOWED_USERS", "").strip()
+        if not configured:
+            configured = self.config.extra.get("allow_from")
+        if not configured:
+            configured = os.getenv("TELEGRAM_ALLOWED_USERS", "").strip()
+        return _coerce_allow_set(configured) if configured else set()
+
+    def _is_native_guest_user_authorized(self, user_id: object) -> bool:
+        normalized = str(user_id or "").strip()
+        allowed = self._telegram_native_guest_allow_from()
+        return bool(normalized and (normalized in allowed or "*" in allowed))
+
+    @staticmethod
+    def _telegram_allowed_updates() -> list:
+        """Include Bot API update types newer than the installed PTB models."""
+        allowed = list(getattr(Update, "ALL_TYPES", []) or [])
+        normalized = {str(getattr(item, "value", item)) for item in allowed}
+        if "guest_message" not in normalized:
+            allowed.append("guest_message")
+        return allowed
+
+    def _guest_message_from_update(self, update: Update) -> Optional[Message]:
+        """Deserialize ``Update.guest_message`` with PTB 22.6 compatibility."""
+        message = getattr(update, "guest_message", None)
+        if message is None:
+            api_kwargs = getattr(update, "api_kwargs", None) or {}
+            message = api_kwargs.get("guest_message")
+        if isinstance(message, dict):
+            try:
+                return Message.de_json(message, self._bot)
+            except Exception:
+                logger.warning("[Telegram] Failed to deserialize guest_message", exc_info=True)
+                return None
+        return message
+
+    @staticmethod
+    def _guest_query_id(message: Message) -> Optional[str]:
+        value = getattr(message, "guest_query_id", None)
+        if value is None:
+            value = (getattr(message, "api_kwargs", None) or {}).get("guest_query_id")
+        normalized = str(value or "").strip()
+        return normalized or None
+
+    async def _handle_guest_update(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Dispatch one Bot API 10.0 guest query into the normal agent path."""
+        if not self._telegram_native_guest_mode():
+            return
+        message = self._guest_message_from_update(update)
+        if not message or not getattr(message, "text", None):
+            return
+        query_id = self._guest_query_id(message)
+        if not query_id:
+            return
+        user = getattr(message, "from_user", None)
+        user_id = getattr(user, "id", None)
+        if not self._is_native_guest_user_authorized(user_id):
+            logger.warning(
+                "[Telegram] Blocked unauthorized native guest caller %s in chat %s",
+                user_id,
+                getattr(getattr(message, "chat", None), "id", None),
+            )
+            return
+
+        event = self._build_message_event(
+            message, MessageType.TEXT, update_id=getattr(update, "update_id", None)
+        )
+        event.text = self._clean_bot_trigger_text(event.text)
+        event.source.telegram_guest_query_id = query_id
+        event.source.telegram_guest_authorized = True
+        event.metadata["telegram_native_guest"] = True
+        event.channel_prompt = (
+            "You are replying through Telegram native Guest Mode. The bot is not "
+            "a member of this chat, and Telegram allows exactly one text reply. "
+            "Answer the current request directly; do not promise follow-up messages "
+            "or require interactive buttons."
+        )
+        await self.handle_message(event)
+
+    async def _send_native_guest_reply(
+        self, content: str, query_id: str
+    ) -> SendResult:
+        """Answer a one-shot Telegram guest query without duplicate retries."""
+        plain_text = (content or "").strip()
+        if not plain_text:
+            return SendResult(success=True, message_id=None)
+        if utf16_len(plain_text) > self.MAX_MESSAGE_LENGTH:
+            message_text = _prefix_within_utf16_limit(
+                plain_text, self.MAX_MESSAGE_LENGTH - 1
+            ) + "…"
+        else:
+            message_text = plain_text
+        result_payload = {
+            "type": "article",
+            "id": uuid.uuid4().hex,
+            "title": "Hermes reply",
+            "input_message_content": {"message_text": message_text},
+        }
+        try:
+            response = await self._bot.do_api_request(
+                "answerGuestQuery",
+                api_kwargs={"guest_query_id": query_id, "result": result_payload},
+            )
+        except Exception as exc:
+            safe_error = _redact_telegram_error_text(exc)
+            return SendResult(
+                success=False,
+                error=safe_error,
+                retryable=False,
+                error_kind=classify_send_error(exc, safe_error),
+            )
+
+        inline_message_id = None
+        if isinstance(response, dict):
+            inline_message_id = response.get("inline_message_id")
+            if inline_message_id is None and isinstance(response.get("result"), dict):
+                inline_message_id = response["result"].get("inline_message_id")
+        else:
+            inline_message_id = getattr(response, "inline_message_id", None)
+        return SendResult(
+            success=True,
+            message_id=str(inline_message_id) if inline_message_id is not None else None,
+            raw_response=response,
+        )
 
     def _is_callback_user_authorized(
         self,
@@ -2193,7 +2339,7 @@ class TelegramAdapter(BasePlatformAdapter):
             # caller recovery will dispose/rebuild the whole adapter.
             await _await_with_thread_deadline(
                 app.updater.start_polling(
-                    allowed_updates=Update.ALL_TYPES,
+                    allowed_updates=self._telegram_allowed_updates(),
                     drop_pending_updates=drop_pending_updates,
                     error_callback=_generation_error_callback,
                 ),
@@ -3790,6 +3936,10 @@ class TelegramAdapter(BasePlatformAdapter):
             ))
             # Handle inline keyboard button callbacks (update prompts)
             self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
+            # PTB 22.6 predates Bot API 10.0's guest_message field. TypeHandler
+            # receives the Update after ordinary MessageHandlers decline it;
+            # _handle_guest_update reads the raw field from Update.api_kwargs.
+            self._app.add_handler(TypeHandler(Update, self._handle_guest_update))
             
             # Start polling — retry initialize() for transient TLS resets.
             # Each attempt is capped by _init_timeout so a single unreachable
@@ -3967,7 +4117,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     url_path=webhook_path,
                     webhook_url=webhook_url,
                     secret_token=webhook_secret,
-                    allowed_updates=Update.ALL_TYPES,
+                    allowed_updates=self._telegram_allowed_updates(),
                     # Webhooks are push-based — Telegram does not hold a
                     # server-side getUpdates queue, so this flag is a no-op
                     # in practice. Mirror the polling path's reconnect
@@ -4302,6 +4452,32 @@ class TelegramAdapter(BasePlatformAdapter):
         else:  # "first" (default)
             return chunk_index == 0
 
+    async def _send_with_retry(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Any = None,
+        max_retries: int = 2,
+        base_delay: float = 2.0,
+    ) -> SendResult:
+        """Preserve the one-shot contract for native Telegram guest queries."""
+        if (metadata or {}).get("telegram_guest_query_id"):
+            return await self.send(
+                chat_id=chat_id,
+                content=content,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+        return await super()._send_with_retry(
+            chat_id=chat_id,
+            content=content,
+            reply_to=reply_to,
+            metadata=metadata,
+            max_retries=max_retries,
+            base_delay=base_delay,
+        )
+
     async def send(
         self,
         chat_id: str,
@@ -4312,6 +4488,12 @@ class TelegramAdapter(BasePlatformAdapter):
         """Send a message to a Telegram chat."""
         if not self._bot:
             return SendResult(success=False, error="Not connected")
+
+        guest_query_id = str(
+            (metadata or {}).get("telegram_guest_query_id") or ""
+        ).strip()
+        if guest_query_id:
+            return await self._send_native_guest_reply(content, guest_query_id)
 
         # getattr() — tests build adapters via object.__new__() (no __init__).
         if getattr(self, "_send_path_degraded", False):
@@ -7341,6 +7523,8 @@ class TelegramAdapter(BasePlatformAdapter):
 
     async def send_typing(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Send typing indicator."""
+        if (metadata or {}).get("telegram_guest_query_id"):
+            return
         if not self._bot or self._typing_in_cooldown(chat_id):
             return
 
