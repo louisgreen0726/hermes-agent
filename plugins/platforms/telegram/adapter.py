@@ -1004,17 +1004,36 @@ class TelegramAdapter(BasePlatformAdapter):
         plain_text = (content or "").strip()
         if not plain_text:
             return SendResult(success=True, message_id=None)
+
+        # Bot API 10.1 allows InputRichMessageContent anywhere an
+        # InputMessageContent is accepted, including guest-query results.  Use
+        # it for tables/task lists/details/math so a bot summoned into a chat it
+        # is not a member of gets the same rich rendering as normal replies.
+        # Guest queries are strictly one-shot, so a rejected rich result cannot
+        # be followed by a second answer; fall back only before making the API
+        # call (content ineligible / rich messages disabled).
+        input_message_content: Dict[str, Any]
+        rich_guest_reply = self._rich_eligible(plain_text)
+        if rich_guest_reply:
+            input_message_content = {
+                "rich_message": self._rich_message_payload(plain_text)
+            }
+        else:
+            input_message_content = {"message_text": ""}
+
         if utf16_len(plain_text) > self.MAX_MESSAGE_LENGTH:
             message_text = _prefix_within_utf16_limit(
                 plain_text, self.MAX_MESSAGE_LENGTH - 1
             ) + "…"
         else:
             message_text = plain_text
+        if not rich_guest_reply:
+            input_message_content["message_text"] = message_text
         result_payload = {
             "type": "article",
             "id": uuid.uuid4().hex,
             "title": "Hermes reply",
-            "input_message_content": {"message_text": message_text},
+            "input_message_content": input_message_content,
         }
         try:
             response = await self._bot.do_api_request(

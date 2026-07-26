@@ -13,8 +13,11 @@ from plugins.platforms.telegram.adapter import TelegramAdapter
 OWNER_ID = "6464333549"
 
 
-def _make_adapter(*, guest_allow_from=None):
-    extra = {"native_guest_mode": True}
+def _make_adapter(*, guest_allow_from=None, rich_messages=False):
+    extra = {
+        "native_guest_mode": True,
+        "rich_messages": rich_messages,
+    }
     if guest_allow_from is not None:
         extra["guest_allow_from"] = guest_allow_from
     adapter = TelegramAdapter(
@@ -175,6 +178,30 @@ async def test_guest_reply_uses_answer_guest_query_instead_of_send_message():
     guest_result = call.kwargs["api_kwargs"]["result"]
     assert guest_result["type"] == "article"
     assert guest_result["input_message_content"]["message_text"]
+
+
+@pytest.mark.asyncio
+async def test_guest_reply_uses_rich_message_content_for_markdown_table():
+    adapter = _make_adapter(rich_messages=True)
+    table = (
+        "| 模型 | IQ |\n"
+        "|---|---:|\n"
+        "| Sol | 92 |"
+    )
+
+    result = await adapter.send(
+        "-100123",
+        table,
+        metadata={"telegram_guest_query_id": "guest-query-1", "notify": True},
+    )
+
+    assert result.success is True
+    call = adapter._bot.do_api_request.await_args
+    assert call.args[0] == "answerGuestQuery"
+    guest_result = call.kwargs["api_kwargs"]["result"]
+    input_content = guest_result["input_message_content"]
+    assert input_content["rich_message"]["markdown"] == table
+    assert "message_text" not in input_content
 
 
 def test_allowed_updates_include_native_guest_messages():
