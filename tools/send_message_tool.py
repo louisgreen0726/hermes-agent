@@ -846,6 +846,24 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     # after all text chunks.
     if platform == Platform.TELEGRAM:
         disable_link_previews = bool(getattr(pconfig, "extra", {}) and pconfig.extra.get("disable_link_previews"))
+        # Prefer the live gateway adapter so direct/cron sends share the same
+        # rich-table path as ordinary assistant replies. If no live adapter is
+        # available (out-of-process cron), fall back to the one-shot sender.
+        result = await _send_via_adapter(
+            platform,
+            pconfig,
+            chat_id,
+            message,
+            thread_id=thread_id,
+            media_files=media_files,
+            force_document=force_document,
+        )
+        if not (isinstance(result, dict) and result.get("error")):
+            return result
+        logger.debug(
+            "Live Telegram adapter send unavailable, falling back to standalone: %s",
+            _sanitize_error_text(result.get("error")),
+        )
         return await _send_telegram(
             pconfig.token,
             chat_id,
@@ -854,6 +872,10 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
             thread_id=thread_id,
             disable_link_previews=disable_link_previews,
             force_document=force_document,
+            rich_messages_enabled=bool(
+                getattr(pconfig, "extra", {})
+                and pconfig.extra.get("rich_messages")
+            ),
         )
 
     # --- Discord: chunked delivery via the registry's standalone_sender_fn.
@@ -1167,7 +1189,16 @@ def _is_telegram_thread_not_found(error: Exception) -> bool:
     return "thread not found" in str(error).lower()
 
 
-async def _send_telegram(token, chat_id, message, media_files=None, thread_id=None, disable_link_previews=False, force_document=False):
+async def _send_telegram(
+    token,
+    chat_id,
+    message,
+    media_files=None,
+    thread_id=None,
+    disable_link_previews=False,
+    force_document=False,
+    rich_messages_enabled=False,
+):
     """Send via Telegram Bot API (one-shot, no polling needed).
 
     Applies markdown→MarkdownV2 formatting (same as the gateway adapter)
@@ -1279,7 +1310,85 @@ async def _send_telegram(token, chat_id, message, media_files=None, thread_id=No
             _tg_caption = formatted
             formatted = ""  # suppress the separate text send below
 
-        if formatted.strip():
+        rich_text_delivered = False
+        if formatted.strip() and not _has_html and rich_messages_enabled:
+            try:
+                from types import SimpleNamespace
+                from plugins.platforms.telegram.adapter import TelegramAdapter
+
+                rich_adapter = TelegramAdapter.__new__(TelegramAdapter)
+                rich_adapter._bot = bot
+                rich_adapter._rich_send_disabled = False
+                rich_adapter._rich_messages_enabled = True
+                rich_adapter._disable_link_previews = disable_link_previews
+                if rich_adapter._rich_eligible(message):
+                    rich_payload = {
+                        "chat_id": int_chat_id,
+                        "rich_message": rich_adapter._rich_message_payload(message),
+                    }
+                    rich_payload.update(
+                        {k: v for k, v in thread_kwargs.items() if v is not None}
+                    )
+                    if disable_link_previews:
+                        rich_payload["link_preview_options"] = {"is_disabled": True}
+                    try:
+                        rich_msg = await bot.do_api_request(
+                            "sendRichMessage", api_kwargs=rich_payload
+                        )
+                    except Exception as rich_error:
+                        logger.warning(
+                            "Standalone Telegram sendRichMessage failed; trying placeholder rich edit: %s",
+                            _sanitize_error_text(rich_error),
+                        )
+                        placeholder = await _send_telegram_message_with_retry(
+                            bot,
+                            chat_id=int_chat_id,
+                            text="...",
+                            parse_mode=None,
+                            **text_kwargs,
+                        )
+                        message_id = getattr(placeholder, "message_id", None)
+                        if message_id is None and isinstance(placeholder, dict):
+                            message_id = placeholder.get("message_id") or (
+                                placeholder.get("result") or {}
+                            ).get("message_id")
+                        if message_id is None:
+                            raise RuntimeError(
+                                "placeholder send returned no message_id"
+                            )
+                        edit_payload = {
+                            "chat_id": int_chat_id,
+                            "message_id": int(message_id),
+                            "rich_message": rich_adapter._rich_message_payload(message),
+                        }
+                        edit_payload.update(
+                            {k: v for k, v in thread_kwargs.items() if v is not None}
+                        )
+                        if disable_link_previews:
+                            edit_payload["link_preview_options"] = {
+                                "is_disabled": True
+                            }
+                        await bot.do_api_request(
+                            "editMessageText", api_kwargs=edit_payload
+                        )
+                        rich_msg = {"result": {"message_id": message_id}}
+
+                    rich_message_id = None
+                    if isinstance(rich_msg, dict):
+                        rich_message_id = rich_msg.get("message_id") or (
+                            rich_msg.get("result") or {}
+                        ).get("message_id")
+                    else:
+                        rich_message_id = getattr(rich_msg, "message_id", None)
+                    last_msg = SimpleNamespace(message_id=rich_message_id)
+                    rich_text_delivered = True
+            except Exception as rich_error:
+                logger.warning(
+                    "Standalone Telegram rich table delivery failed; falling back to MarkdownV2: %s",
+                    _sanitize_error_text(rich_error),
+                )
+
+        if formatted.strip() and not rich_text_delivered:
             # Chunk *after* formatting: MarkdownV2/HTML escaping inflates the
             # text (each escaped char like `!`/`.`/`-` becomes `\!`/`\.`/`\-`),
             # so a message that fit under 4096 UTF-16 units raw can exceed the

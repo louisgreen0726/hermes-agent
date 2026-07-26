@@ -878,6 +878,75 @@ class TestSendToPlatformChunking:
         sent_text = send.await_args.args[2]
         assert "<https://en.wikipedia.org/wiki/Foo_(bar)|Foo>" in sent_text
 
+    def test_telegram_text_prefers_live_adapter_for_rich_rendering(self, monkeypatch):
+        """Text-only Telegram sends reuse the live adapter so cron/direct
+        delivery gets the same rich-table path as ordinary replies."""
+        content = "| 商品 | 价格 |\n|---|---:|\n| 蓝晶碧玺 | 1000 |"
+        live_adapter = MagicMock()
+        live_adapter.send = AsyncMock(
+            return_value=SimpleNamespace(success=True, message_id="77", error=None)
+        )
+        runner = SimpleNamespace(adapters={Platform.TELEGRAM: live_adapter})
+        monkeypatch.setattr("gateway.run._gateway_runner_ref", lambda: runner)
+
+        with patch(
+            "tools.send_message_tool._send_telegram",
+            new=AsyncMock(return_value={"success": True, "message_id": "legacy"}),
+        ) as standalone:
+            result = asyncio.run(
+                _send_to_platform(
+                    Platform.TELEGRAM,
+                    SimpleNamespace(
+                        enabled=True,
+                        token="tok",
+                        extra={"rich_messages": True},
+                    ),
+                    "123",
+                    content,
+                )
+            )
+
+        assert result["success"] is True
+        assert result["message_id"] == "77"
+        live_adapter.send.assert_awaited_once_with(
+            chat_id="123", content=content, metadata=None
+        )
+        standalone.assert_not_awaited()
+
+    def test_standalone_telegram_cjk_table_uses_raw_rich_markdown(self, monkeypatch):
+        """Out-of-process cron sends keep CJK pipe tables intact instead of
+        converting them into MarkdownV2 row-group bullets."""
+        content = "| 商品 | 价格 |\n|---|---:|\n| 蓝晶碧玺 | 1000 |"
+        bot = MagicMock()
+        bot.do_api_request = AsyncMock(
+            return_value={"result": {"message_id": 42}}
+        )
+        bot.send_message = AsyncMock(
+            return_value=SimpleNamespace(message_id=42)
+        )
+        bot.send_photo = AsyncMock()
+        bot.send_video = AsyncMock()
+        bot.send_voice = AsyncMock()
+        bot.send_audio = AsyncMock()
+        bot.send_document = AsyncMock()
+        _install_telegram_mock(monkeypatch, bot)
+
+        result = asyncio.run(
+            _send_telegram(
+                "tok",
+                "123",
+                content,
+                rich_messages_enabled=True,
+            )
+        )
+
+        assert result["success"] is True
+        bot.do_api_request.assert_awaited_once()
+        call = bot.do_api_request.await_args
+        assert call.args[0] == "sendRichMessage"
+        assert call.kwargs["api_kwargs"]["rich_message"]["markdown"] == content
+        bot.send_message.assert_not_awaited()
+
     def test_telegram_markdown_expansion_is_chunked_before_send(self, monkeypatch):
         """Telegram chunking must account for MarkdownV2 escaping expansion.
 

@@ -169,25 +169,32 @@ async def test_math_outside_details_still_uses_rich_send():
 
 
 @pytest.mark.asyncio
-async def test_cjk_rich_content_skips_rich_send_to_avoid_tdesktop_garble():
+async def test_cjk_rich_content_uses_native_rich_send_for_tables():
+    """CJK is safe in final rich messages; only rich draft previews need the
+    Telegram Desktop CJK overlay guard. A Chinese table must not be flattened
+    into MarkdownV2 row-group bullets at final delivery."""
     adapter = _make_adapter()
 
     result = await adapter.send("12345", CJK_RICH_CONTENT)
 
     assert result.success is True
-    adapter._bot.do_api_request.assert_not_called()
-    adapter._bot.send_message.assert_awaited_once()
+    adapter._bot.do_api_request.assert_awaited_once()
+    api_kwargs = _rich_api_kwargs(adapter)
+    assert api_kwargs["rich_message"]["markdown"] == CJK_RICH_CONTENT
+    adapter._bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_astral_cjk_rich_content_skips_rich_send_to_avoid_tdesktop_garble():
+async def test_astral_cjk_rich_content_uses_native_rich_send_for_tables():
     adapter = _make_adapter()
 
     result = await adapter.send("12345", ASTRAL_CJK_RICH_CONTENT)
 
     assert result.success is True
-    adapter._bot.do_api_request.assert_not_called()
-    adapter._bot.send_message.assert_awaited_once()
+    adapter._bot.do_api_request.assert_awaited_once()
+    api_kwargs = _rich_api_kwargs(adapter)
+    assert api_kwargs["rich_message"]["markdown"] == ASTRAL_CJK_RICH_CONTENT
+    adapter._bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -354,21 +361,52 @@ async def test_rich_limit_is_characters_not_bytes():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "exc",
+    ("exc", "expected_rich_calls"),
     [
-        BadRequest("can't parse rich message"),
-        BadRequest("Method not found"),
+        (BadRequest("can't parse rich message"), 2),
+        (BadRequest("Method not found"), 1),
     ],
 )
-async def test_permanent_rich_error_falls_back_to_legacy(exc):
+async def test_permanent_rich_error_falls_back_to_legacy(exc, expected_rich_calls):
     adapter = _make_adapter()
     adapter._bot.do_api_request = AsyncMock(side_effect=exc)
 
     result = await adapter.send("12345", RICH_CONTENT)
 
     assert result.success is True
-    adapter._bot.do_api_request.assert_awaited_once()
-    adapter._bot.send_message.assert_awaited()  # legacy fallback ran
+    assert adapter._bot.do_api_request.await_count == expected_rich_calls
+    adapter._bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_rich_fallback_uses_placeholder_then_rich_edit():
+    """Direct/cron sends can still render tables when rich send is rejected.
+
+    Some Bot API deployments reject sendRichMessage while accepting
+    editMessageText with rich_message, which is the path streaming finals use.
+    In that case direct sends should create a placeholder and upgrade it instead
+    of degrading the table through MarkdownV2 row-group conversion.
+    """
+    adapter = _make_adapter()
+    adapter._bot.do_api_request = AsyncMock(
+        side_effect=[
+            BadRequest("can't parse rich message"),
+            {"result": {"message_id": 456}},
+        ]
+    )
+    adapter._bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=456))
+
+    result = await adapter.send("12345", RICH_CONTENT)
+
+    assert result.success is True
+    assert result.message_id == "456"
+    assert adapter._bot.send_message.await_count == 1
+    assert adapter._bot.send_message.await_args.kwargs["text"] == "..."
+    assert adapter._bot.do_api_request.await_count == 2
+    assert adapter._bot.do_api_request.await_args_list[0].args[0] == "sendRichMessage"
+    assert adapter._bot.do_api_request.await_args_list[1].args[0] == "editMessageText"
+    edit_kwargs = adapter._bot.do_api_request.await_args_list[1].kwargs["api_kwargs"]
+    assert edit_kwargs["rich_message"]["markdown"] == RICH_CONTENT
 
 
 @pytest.mark.asyncio
@@ -721,6 +759,7 @@ async def test_cjk_rich_content_skips_rich_draft_to_avoid_tdesktop_garble():
     assert result.success is True
     adapter._bot.do_api_request.assert_not_called()
     adapter._bot.send_message_draft.assert_awaited_once()
+    assert adapter._has_telegram_desktop_cjk_rich_draft_garble_shape(CJK_RICH_CONTENT)
 
 
 @pytest.mark.asyncio
@@ -895,7 +934,9 @@ async def test_legacy_edit_error_logs_redacted_bot_token_without_traceback(monke
 
 
 @pytest.mark.asyncio
-async def test_finalize_edit_cjk_rich_content_stays_legacy_to_avoid_tdesktop_garble():
+async def test_finalize_edit_cjk_table_upgrades_preview_to_native_rich():
+    """A streamed Chinese table must finalize in place as a rich table rather
+    than being flattened by the legacy MarkdownV2 edit path."""
     adapter = _make_adapter()
 
     result = await adapter.edit_message(
@@ -903,8 +944,11 @@ async def test_finalize_edit_cjk_rich_content_stays_legacy_to_avoid_tdesktop_gar
     )
 
     assert result.success is True
-    adapter._bot.do_api_request.assert_not_called()
-    adapter._bot.edit_message_text.assert_awaited_once()
+    adapter._bot.do_api_request.assert_awaited_once()
+    call = adapter._bot.do_api_request.call_args
+    assert call.args[0] == "editMessageText"
+    assert call.kwargs["api_kwargs"]["rich_message"]["markdown"] == CJK_RICH_CONTENT
+    adapter._bot.edit_message_text.assert_not_called()
 
 
 @pytest.mark.asyncio

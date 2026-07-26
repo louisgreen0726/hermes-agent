@@ -1714,13 +1714,13 @@ class TelegramAdapter(BasePlatformAdapter):
                 return True
         return False
 
-    def _has_telegram_desktop_cjk_rich_garble_shape(self, content: str) -> bool:
+    def _has_telegram_desktop_cjk_rich_draft_garble_shape(self, content: str) -> bool:
         """Return True for CJK content that current TDesktop rich drafts garble.
 
-        Telegram Mac/Desktop Bot API 10.1 rich-message rendering currently
-        leaves overlapping draft/overlay glyph artifacts for CJK text (#47653).
-        The legacy MarkdownV2 path renders the same text cleanly, so skip rich
-        delivery up front until affected clients age out.
+        Telegram Mac/Desktop Bot API 10.1 rich *draft* rendering currently
+        leaves overlapping preview glyph artifacts for CJK text (#47653).
+        Final ``sendRichMessage`` / rich ``editMessageText`` delivery does not
+        use that draft overlay, so this guard is intentionally draft-only.
         """
         return bool(content and self._RICH_CJK_RE.search(content))
 
@@ -1766,7 +1766,6 @@ class TelegramAdapter(BasePlatformAdapter):
             and content.strip()
             and self._needs_rich_rendering(content)
             and not self._has_telegram_desktop_details_math_crash_shape(content)
-            and not self._has_telegram_desktop_cjk_rich_garble_shape(content)
             and self._content_fits_rich_limits(content)
             and self._bot_supports_rich()
         )
@@ -2020,6 +2019,64 @@ class TelegramAdapter(BasePlatformAdapter):
             message_id=str(message_id) if message_id is not None else None,
         )
 
+    async def _try_send_then_edit_rich(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> Optional[SendResult]:
+        """Fallback when rich new-message send is rejected but rich edit works.
+
+        Direct/cron sends have no streamed preview to finalize. Create a tiny
+        placeholder and immediately upgrade it through the same rich-edit path
+        used by streamed final replies. Any failure returns ``None`` so the
+        legacy MarkdownV2 path can still deliver the message.
+        """
+        thread_id = self._metadata_thread_id(metadata)
+        routing = self._compute_single_send_routing(
+            chat_id, reply_to, metadata, thread_id
+        )
+        if routing is None:
+            return None
+        reply_to_id, thread_kwargs = routing
+
+        placeholder_kwargs: Dict[str, Any] = {
+            "chat_id": normalize_telegram_chat_id(chat_id),
+            "text": "...",
+        }
+        placeholder_kwargs.update(
+            {k: v for k, v in thread_kwargs.items() if v is not None}
+        )
+        placeholder_kwargs.update(self._link_preview_kwargs())
+        placeholder_kwargs.update(self._notification_kwargs(metadata))
+        if reply_to_id is not None:
+            # PTB's send_message accepts the legacy scalar and translates it to
+            # reply_parameters for the Bot API.
+            placeholder_kwargs["reply_to_message_id"] = reply_to_id
+
+        try:
+            msg = await self._bot.send_message(**placeholder_kwargs)
+        except Exception as exc:
+            logger.debug(
+                "[%s] rich placeholder send failed; falling back to MarkdownV2: %s",
+                self.name,
+                _redact_telegram_error_text(exc),
+            )
+            return None
+
+        message_id = getattr(msg, "message_id", None)
+        if message_id is None and isinstance(msg, dict):
+            message_id = msg.get("message_id") or (
+                msg.get("result") or {}
+            ).get("message_id")
+        if message_id is None:
+            return None
+
+        return await self._try_edit_rich(
+            chat_id, str(message_id), content, metadata=metadata
+        )
+
     async def _try_edit_rich(
         self,
         chat_id: str,
@@ -2114,7 +2171,7 @@ class TelegramAdapter(BasePlatformAdapter):
             and content
             and content.strip()
             and not self._has_telegram_desktop_details_math_crash_shape(content)
-            and not self._has_telegram_desktop_cjk_rich_garble_shape(content)
+            and not self._has_telegram_desktop_cjk_rich_draft_garble_shape(content)
             and self._content_fits_rich_limits(content)
             and self._bot_supports_rich()
         )
@@ -4525,6 +4582,19 @@ class TelegramAdapter(BasePlatformAdapter):
                             except Exception:
                                 pass  # Typing failures are non-fatal
                     return rich_result
+
+                # Some Bot API deployments reject sendRichMessage while
+                # accepting editMessageText with a rich_message payload. Direct
+                # and cron sends have no preview to edit, so create a tiny
+                # placeholder and upgrade it before degrading the table to
+                # MarkdownV2 row groups. Capability failures latch rich off and
+                # skip this retry because the edit endpoint is unavailable too.
+                if not getattr(self, "_rich_send_disabled", False):
+                    rich_edit_result = await self._try_send_then_edit_rich(
+                        chat_id, content, reply_to, metadata
+                    )
+                    if rich_edit_result is not None:
+                        return rich_edit_result
 
             # Format and split message if needed
             formatted = self.format_message(content)
@@ -9956,6 +10026,10 @@ async def _standalone_send(
         thread_id=thread_id,
         disable_link_previews=disable_link_previews,
         force_document=force_document,
+        rich_messages_enabled=bool(
+            getattr(pconfig, "extra", {})
+            and pconfig.extra.get("rich_messages")
+        ),
     )
 
 
