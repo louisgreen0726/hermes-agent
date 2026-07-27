@@ -463,6 +463,25 @@ class TestGeneratedSystemdUnits:
 
         assert "/home/test/.nvm/versions/node/v24.14.0/bin" in unit
 
+    def test_user_unit_is_stable_across_standard_and_bundled_node(self, monkeypatch):
+        node_path = {"value": "/usr/local/bin/node"}
+        monkeypatch.setattr(
+            gateway_cli,
+            "_build_service_path_dirs",
+            lambda: ["/root/.hermes/node/bin"],
+        )
+        monkeypatch.setattr(
+            gateway_cli.shutil,
+            "which",
+            lambda cmd: node_path["value"] if cmd == "node" else None,
+        )
+
+        shell_unit = gateway_cli.generate_systemd_unit(system=False)
+        node_path["value"] = "/root/.hermes/node/bin/node"
+        service_unit = gateway_cli.generate_systemd_unit(system=False)
+
+        assert shell_unit == service_unit
+
     def test_user_unit_does_not_leak_profile_node_symlink_target(self, tmp_path, monkeypatch):
         # Regression for the multi-profile gateway restart-loop flap (#48700):
         # ~/.local/bin/node is often a symlink into a *specific* profile's node
