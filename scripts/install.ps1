@@ -3762,6 +3762,7 @@ try {
     if ($Manifest) {
         $payload = @{
             protocol_version = $InstallStageProtocolVersion
+            source_repository = "https://github.com/louisgreen0726/hermes-agent"
             stages = @($InstallStages | ForEach-Object {
                 @{
                     name             = $_.Name

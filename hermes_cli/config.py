@@ -435,7 +435,7 @@ def detect_install_method(project_root: Optional[Path] = None) -> str:
     The supported installs self-identify via the code-scoped stamp:
       - the curl installer (scripts/install.sh, the README/website install
         command) git-clones the repo and stamps ``git`` next to the code;
-      - the published ``nousresearch/hermes-agent`` image bakes a ``docker``
+      - images built from this repository's ``Dockerfile`` bake a ``docker``
         stamp into ``/opt/hermes`` at build time.
     An unsupported manual install dropped into a container (no stamp) falls
     through to the ``.git`` checks and behaves like any off-path install.
@@ -535,7 +535,10 @@ def recommended_update_command_for_method(method: str) -> str:
     if method in {"nix", "nixos"}:
         return _NIX_UPDATE_MSG
     if method == "docker":
-        return "docker pull nousresearch/hermes-agent:latest"
+        return (
+            "Louis does not publish a prebuilt Docker image; rebuild from "
+            "https://github.com/louisgreen0726/hermes-agent using its Dockerfile."
+        )
     return "hermes-update-louis"
 
 
@@ -560,34 +563,43 @@ def recommended_update_command() -> str:
 #     reinstall: curl ... install.sh") is actively misleading inside Docker
 #     — that script installs a *new* host-side Hermes, it doesn't update
 #     the running container.
-#   - The right action is ``docker pull`` + restart the container; this
-#     helper spells that out, with notes on tag pinning and config
-#     persistence so users don't get blindsided.
+#   - Louis does not publish a prebuilt image. Pulling the Nous Research image
+#     would switch distributions, so the only supported route is rebuilding
+#     from the Louis source and restarting the container.
 _DOCKER_UPDATE_MESSAGE = """\
 ✗ ``hermes update`` doesn't apply inside the Docker container.
 
-Hermes Agent runs as a published image (nousresearch/hermes-agent), not a
-git checkout — the container has no working tree to pull into.  Update by
-pulling a fresh image and restarting your container instead:
+This Louis distribution does not publish a prebuilt Docker image. Pulling the
+Nous Research image would switch you back to the upstream distribution.
 
-  docker pull nousresearch/hermes-agent:latest
+Build a new image from the current Louis repository Dockerfile, then restart
+the container:
+
+  git clone https://github.com/louisgreen0726/hermes-agent.git
+  cd hermes-agent
+  docker build -t louis-hermes-agent:local .
   # then restart whatever started the container, e.g.:
   docker compose up -d --force-recreate hermes-agent
-  # or, for ad-hoc runs, exit the current container and `docker run` again
+  # or rerun your own docker run command with the rebuilt local image
 
 Verify the new version after restart:
-  docker run --rm nousresearch/hermes-agent:latest --version
+  docker run --rm louis-hermes-agent:local --version
 
 Notes:
-  • If you pinned a specific tag (e.g. ``:v0.14.0``) the ``:latest`` tag
-    won't move your container — pull the newer tag you actually want, or
-    switch to ``:latest`` / ``:main`` for rolling updates.  See available
-    tags at https://hub.docker.com/r/nousresearch/hermes-agent/tags
   • Your config and session history live under ``$HERMES_HOME`` (``/opt/data``
     in the container, typically bind-mounted from the host) and persist
-    across image upgrades — re-pulling doesn't lose any state.
-  • Running a fork?  Build your own image with this repo's ``Dockerfile``
-    and replace the ``docker pull`` step with your build/push pipeline."""
+    across image rebuilds.
+  • If you operate a registry, tag and push this locally built image through
+    your own reviewed build pipeline."""
+
+
+def format_louis_docker_rebuild_hint(component: str = "the bundled dependencies") -> str:
+    """Explain how Louis Docker users obtain a missing bundled component."""
+    return (
+        f"{component} is missing from this Docker image. Louis does not publish "
+        "a prebuilt image; rebuild from the current Louis repository Dockerfile: "
+        "https://github.com/louisgreen0726/hermes-agent"
+    )
 
 
 def format_docker_update_message() -> str:

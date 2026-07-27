@@ -186,7 +186,10 @@ def test_container_unknown_install_without_stamp_is_unknown(tmp_path):
 
 def test_recommended_update_command_docker():
     from hermes_cli.config import recommended_update_command_for_method
-    assert "docker pull" in recommended_update_command_for_method("docker")
+    guidance = recommended_update_command_for_method("docker")
+    assert "does not publish a prebuilt Docker image" in guidance
+    assert "louisgreen0726/hermes-agent" in guidance
+    assert "docker pull" not in guidance
 
 
 def test_recommended_update_command_nix():

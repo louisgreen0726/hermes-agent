@@ -172,7 +172,7 @@ import {
   sandboxFallbackFromEnv,
   sandboxPreflight
 } from './update-relaunch'
-import { isOfficialSshRemote, OFFICIAL_REPO_HTTPS_URL } from './update-remote'
+import { LOUIS_REPO_HTTPS_URL, selectLouisUpdateRemote } from './update-remote'
 import { spawnUpdaterProcess } from './updater-process'
 import { fetchMarketplaceThemes, searchMarketplaceThemes } from './vscode-marketplace'
 import {
@@ -2313,13 +2313,20 @@ function emitUpdateProgress(payload) {
 // installed clients. Read-only ls-remote probe; only flips on a definitive
 // "ref absent" (exit 2), never on a transient network error, so a flaky
 // connection can't strand a user on the wrong branch.
-async function resolveHealedBranch(updateRoot, branch) {
+async function resolveHealedBranch(updateRoot, branch, knownOriginUrl = null) {
+  const originUrl = knownOriginUrl ?? (await getOriginUrl(updateRoot))
+  const remote = selectLouisUpdateRemote(originUrl)
+
+  if (!remote) {
+    throw new Error(
+      `Desktop updates require origin to be the Louis repository; found ${originUrl || '(missing origin)'}.`
+    )
+  }
+
   if (!branch || branch === 'main') {
     return branch || 'main'
   }
 
-  const originUrl = await getOriginUrl(updateRoot)
-  const remote = isOfficialSshRemote(originUrl) ? OFFICIAL_REPO_HTTPS_URL : 'origin'
   const probe = await runGit(['ls-remote', '--exit-code', '--heads', remote, branch], { cwd: updateRoot })
 
   if (probe.code !== 2) {
@@ -2351,15 +2358,27 @@ async function checkUpdates() {
     }
   }
 
-  branch = await resolveHealedBranch(updateRoot, branch)
   const originUrl = await getOriginUrl(updateRoot)
+  const remote = selectLouisUpdateRemote(originUrl)
 
-  if (isOfficialSshRemote(originUrl)) {
+  if (!remote) {
+    return {
+      supported: false,
+      reason: 'non-louis-origin',
+      message: `Desktop updates require the Louis repository as origin; found ${originUrl || '(missing origin)'}.`,
+      hermesRoot: updateRoot,
+      branch
+    }
+  }
+
+  branch = await resolveHealedBranch(updateRoot, branch, originUrl)
+
+  if (remote === LOUIS_REPO_HTTPS_URL) {
     const git = args => runGit(args, { cwd: updateRoot }).then(r => r.stdout.trim())
 
     const [currentSha, target, dirtyStr, currentBranch] = await Promise.all([
       git(['rev-parse', 'HEAD']),
-      runGit(['ls-remote', OFFICIAL_REPO_HTTPS_URL, `refs/heads/${branch}`], { cwd: updateRoot }),
+      runGit(['ls-remote', LOUIS_REPO_HTTPS_URL, `refs/heads/${branch}`], { cwd: updateRoot }),
       git(['status', '--porcelain']),
       git(['rev-parse', '--abbrev-ref', 'HEAD'])
     ])
@@ -2776,7 +2795,13 @@ async function applyUpdates(opts = {}) {
 
     const updateRoot = resolveUpdateRoot()
     const { branch: configuredBranch } = readDesktopUpdateConfig()
-    const branch = await resolveHealedBranch(updateRoot, configuredBranch || DEFAULT_UPDATE_BRANCH)
+
+    // A packaged no-Git install has no origin to validate. Its staged updater
+    // uses the fixed Louis installer/ZIP source, matching bootstrap recovery.
+    const branch = directoryExists(path.join(updateRoot, '.git'))
+      ? await resolveHealedBranch(updateRoot, configuredBranch || DEFAULT_UPDATE_BRANCH)
+      : configuredBranch || DEFAULT_UPDATE_BRANCH
+
     const updaterArgs = ['--update', '--branch', branch]
     const targetApp = IS_MAC ? runningAppBundle() : null
 

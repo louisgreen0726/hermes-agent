@@ -150,7 +150,12 @@ def _is_ssh_remote(url: str | None) -> bool:
 
 
 def _is_release_ssh_remote(url: str | None) -> bool:
-    return _is_ssh_remote(url) and _canonical_github_remote(url) == "github.com/louisgreen0726/hermes-agent"
+    return _is_ssh_remote(url) and _is_release_remote(url)
+
+
+def _is_release_remote(url: str | None) -> bool:
+    """Return whether *url* identifies the Louis release repository."""
+    return _canonical_github_remote(url) == "github.com/louisgreen0726/hermes-agent"
 
 
 def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str]:
@@ -199,6 +204,8 @@ def _check_via_rev(local_rev: str) -> Optional[int]:
 def _check_via_local_git(repo_dir: Path) -> Optional[int]:
     """Count commits behind origin/main in a local checkout."""
     origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
+    if not _is_release_remote(origin_url):
+        return None
     if _is_release_ssh_remote(origin_url):
         head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
         checked = _check_via_rev(head_rev) if head_rev else None

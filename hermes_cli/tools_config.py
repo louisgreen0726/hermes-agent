@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Set
 
 from hermes_cli.config import (
     cfg_get,
+    format_louis_docker_rebuild_hint,
     load_config, save_config, get_env_value, save_env_value,
 )
 from hermes_cli.colors import Colors, color
@@ -1291,12 +1292,7 @@ def _run_post_setup(post_setup_key: str):
             _print_warning(
                 "    Chromium is missing but you're running in Docker."
             )
-            _print_info(
-                "    Pull the latest image to get the bundled Chromium:"
-            )
-            _print_info(
-                "      docker pull ghcr.io/nousresearch/hermes-agent:latest"
-            )
+            _print_info(f"    {format_louis_docker_rebuild_hint('Bundled Chromium')}")
             return
 
         if not npx_bin:

@@ -77,6 +77,14 @@ class TestTimeoutErrorFormatting:
         err = bt._format_browser_timeout_error("open", 60, "", "")
         assert "agent-browser install --with-deps" in err
 
+    def test_docker_hint_rebuilds_louis_image_without_upstream_pull(self, monkeypatch):
+        monkeypatch.setattr(bt, "_is_local_mode", lambda: True)
+        monkeypatch.setattr(bt, "_running_in_docker", lambda: True)
+        err = bt._format_browser_timeout_error("open", 60, "", "")
+        assert "louisgreen0726/hermes-agent" in err
+        assert "does not publish a prebuilt image" in err
+        assert "nousresearch/hermes-agent" not in err.lower()
+
 
 class TestReadCommandOutputFiles:
     def test_reads_stdout_and_stderr(self, tmp_path):

@@ -9956,6 +9956,15 @@ def _cmd_update_check(branch: str = "main", *, branch_explicit: bool = False):
     if sys.platform == "win32":
         git_cmd = ["git", "-c", "windows.appendAtomically=false"]
 
+    # A check is still a network operation. Refuse before shallow probing or
+    # fetch when the checkout is no longer attached to the Louis release repo.
+    origin_url = _get_origin_url(git_cmd, PROJECT_ROOT)
+    if not _is_louis_origin(origin_url):
+        print("✗ Refusing to check for updates from a non-Louis origin:")
+        print(f"  {origin_url or '(missing origin)'}")
+        print("  Expected: https://github.com/louisgreen0726/hermes-agent.git")
+        sys.exit(1)
+
     # Fetch only the branch we compare against. Louis builds deliberately use
     # origin as the sole automatic release source; the Nous Research upstream
     # remote is retained for manual review only.
@@ -11112,6 +11121,16 @@ def _cmd_update_impl(args, gateway_mode: bool):
             )
             sys.exit(1)
 
+    if use_zip_update:
+        # Packaged Windows installs may have no git metadata. The ZIP helper
+        # has a fixed Louis archive URL and validates the supported branch, so
+        # there is no origin to validate on this path.
+        try:
+            _update_via_zip(args)
+        finally:
+            _resume_windows_gateways_after_update(_windows_gateway_resume)
+        return
+
     # On Windows, git can fail with "unable to write loose object file: Invalid argument"
     # due to filesystem atomicity issues. Set the recommended workaround.
     if sys.platform == "win32" and git_dir.exists():
@@ -11150,14 +11169,6 @@ def _cmd_update_impl(args, gateway_mode: bool):
         print(f"  {origin_url or '(missing origin)'}")
         print("  Expected: https://github.com/louisgreen0726/hermes-agent.git")
         sys.exit(1)
-
-    if use_zip_update:
-        # ZIP-based update for Windows when git is broken
-        try:
-            _update_via_zip(args)
-        finally:
-            _resume_windows_gateways_after_update(_windows_gateway_resume)
-        return
 
     # Fetch and pull
     try:

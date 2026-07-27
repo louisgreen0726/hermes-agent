@@ -12,6 +12,7 @@ import {
   hasExistingGitCheckout,
   installedAgentInstallScript,
   installRefForStamp,
+  installScriptUrl,
   isPinnedCommit,
   resolveInstallScript,
   resolveMarkerPinnedCommit,
@@ -20,6 +21,13 @@ import {
 
 const SCRIPT_NAME = process.platform === 'win32' ? 'install.ps1' : 'install.sh'
 const ZERO_COMMIT = '0000000000000000000000000000000000000000'
+
+test('bootstrap installer downloads only from the Louis repository', () => {
+  assert.equal(
+    installScriptUrl('abc123'),
+    `https://raw.githubusercontent.com/louisgreen0726/hermes-agent/abc123/scripts/${SCRIPT_NAME}`
+  )
+})
 
 function mkTmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-bootstrap-test-'))

@@ -12,6 +12,7 @@ import {
   locateHermes,
   LOCKFILE_SCHEMA_VERSION,
   lockfilePath,
+  LOUIS_REMOTE_INSTALL_COMMAND,
   openForward,
   ownershipDirectory,
   pidIsOurDashboard,
@@ -143,6 +144,7 @@ test('locateHermes throws a hermes-not-found error with an install hint', async 
     (err: any) => {
       assert.equal(err.kind, 'hermes-not-found')
       assert.match(err.message, /install/i)
+      assert.match(err.message, new RegExp(LOUIS_REMOTE_INSTALL_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 
       return true
     }

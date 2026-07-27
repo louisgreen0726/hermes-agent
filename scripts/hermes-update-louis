@@ -26,7 +26,13 @@ TEST_PATHS=(
   tests/gateway/test_update_streaming.py
   tests/hermes_cli/test_banner_git_state.py
   tests/hermes_cli/test_cmd_update.py
+  tests/hermes_cli/test_louis_distribution.py
+  tests/hermes_cli/test_louis_updater.py
+  tests/hermes_cli/test_managed_installs.py
+  tests/hermes_cli/test_model_catalog.py
   tests/hermes_cli/test_update_check.py
+  tests/test_project_metadata.py
+  tests/test_packaging_metadata.py
   tests/tools/test_send_message_tool.py
   tests/tools/test_send_message_telegram_proxy.py
   tests/tools/test_telegram_send_message_caption.py
@@ -88,9 +94,59 @@ worktree="$(mktemp -d /tmp/hermes-louis-update.XXXXXX)"
 old_sha=""
 gateway_was_active=0
 mutated_dependencies=0
+activation_started=0
+activation_completed=0
+backup_bundle=""
+
+install_source_dependencies() {
+  source_root="$1"
+  if [[ -x "$UV_BIN" ]]; then
+    "$UV_BIN" pip install --python "$PYTHON" -e "$source_root[all]"
+  else
+    "$PYTHON" -m pip install -e "$source_root[all]"
+  fi
+}
+
+verify_editable_source() {
+  expected_root="$1"
+  (cd / && "$PYTHON" - "$expected_root" <<'PY'
+from pathlib import Path
+import sys
+import hermes_cli.main
+
+actual = Path(hermes_cli.main.__file__).resolve()
+expected = Path(sys.argv[1]).resolve()
+if expected not in actual.parents:
+    raise SystemExit(f"editable install points outside expected source: {actual}")
+print(f"Editable install verified: {actual}")
+PY
+  )
+}
+
+rollback_activation() {
+  echo "Rolling back to previous Louis release $old_sha..."
+  if [[ "$gateway_was_active" -eq 1 ]]; then
+    systemctl --user stop hermes-gateway.service >/dev/null 2>&1 || true
+  fi
+  git -C "$REPO" reset --hard "$old_sha" || return 1
+  install_source_dependencies "$REPO" || return 1
+  verify_editable_source "$REPO" || return 1
+  [[ "$(git -C "$REPO" rev-parse HEAD)" == "$old_sha" ]] || return 1
+  [[ -z "$(git -C "$REPO" status --porcelain)" ]] || return 1
+  echo "Rollback restored source and Python environment."
+}
 
 cleanup() {
   rc=$?
+  trap - EXIT
+  set +e
+  if (( rc != 0 && activation_started == 1 && activation_completed == 0 )); then
+    if rollback_activation; then
+      mutated_dependencies=0
+    else
+      echo "ERROR: automatic rollback failed. Gateway remains stopped."
+    fi
+  fi
   git -C "$REPO" worktree remove --force "$worktree" >/dev/null 2>&1 || true
   git -C "$REPO" branch -D "$candidate" >/dev/null 2>&1 || true
   rm -rf "$worktree"
@@ -151,6 +207,13 @@ if [[ "$MODE" == dry-run ]]; then
   exit 0
 fi
 
+stamp="$(date +%Y%m%d-%H%M%S)"
+backup_bundle="$BACKUP_DIR/louis-before-$stamp.bundle"
+echo "Backing up current Louis source before activation..."
+git -C "$REPO" bundle create "$backup_bundle" "$BRANCH"
+git -C "$REPO" bundle verify "$backup_bundle"
+sha256sum "$backup_bundle" > "$backup_bundle.sha256"
+
 if [[ "$(git -C "$REPO" rev-parse HEAD)" != "$old_sha" \
    || "$(git -C "$REPO" branch --show-current)" != "$BRANCH" \
    || -n "$(git -C "$REPO" status --porcelain)" \
@@ -166,12 +229,9 @@ if [[ "$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)"
 fi
 
 mutated_dependencies=1
+activation_started=1
 echo "Installing candidate dependencies into the shared Hermes environment..."
-if [[ -x "$UV_BIN" ]]; then
-  "$UV_BIN" pip install --python "$PYTHON" -e "$worktree[all]"
-else
-  "$PYTHON" -m pip install -e "$worktree[all]"
-fi
+install_source_dependencies "$worktree"
 
 echo "Re-running Louis regression suite with activated dependencies..."
 (cd "$worktree" && scripts/run_tests.sh "${TEST_PATHS[@]}" -q)
@@ -191,28 +251,10 @@ if [[ -x "$UV_BIN" ]]; then
 else
   "$PYTHON" -m pip install --no-deps -e "$REPO"
 fi
-
-(cd /root && "$PYTHON" - <<PY
-from pathlib import Path
-import hermes_cli.main
-actual = Path(hermes_cli.main.__file__).resolve()
-expected = Path("$REPO").resolve()
-if expected not in actual.parents:
-    raise SystemExit(f"editable install points outside production: {actual}")
-print(f"Editable install verified: {actual}")
-PY
-)
+verify_editable_source "$REPO"
 [[ -z "$(git -C "$REPO" status --porcelain)" ]] || {
   echo "ERROR: activation dirtied production. Gateway remains stopped."; exit 8;
 }
-
-stamp="$(date +%Y%m%d-%H%M%S)"
-bundle="$BACKUP_DIR/louis-$stamp.bundle"
-git -C "$REPO" bundle create "$bundle" "$BRANCH" "$REMOTE/$BRANCH"
-git -C "$REPO" bundle verify "$bundle"
-sha256sum "$bundle" > "$bundle.sha256"
-printf 'updated_at=%s\nprevious_commit=%s\ntarget_commit=%s\nlog=%s\n' \
-  "$(date -Is)" "$old_sha" "$target_sha" "$LOG_FILE" > "$BACKUP_DIR/STATUS"
 
 if [[ "$gateway_was_active" -eq 1 ]]; then
   echo "Starting Gateway from the validated Louis release..."
@@ -235,8 +277,12 @@ if [[ "$gateway_was_active" -eq 1 ]]; then
   echo "Gateway stable with PID $stable_pid."
 fi
 
+printf 'updated_at=%s\nprevious_commit=%s\ntarget_commit=%s\nbackup_bundle=%s\nlog=%s\n' \
+  "$(date -Is)" "$old_sha" "$target_sha" "$backup_bundle" "$LOG_FILE" > "$BACKUP_DIR/STATUS"
+activation_completed=1
 mutated_dependencies=0
 echo "SUCCESS"
 echo "Release: $(git -C "$REPO" rev-parse --short HEAD)"
 echo "Version: $("$REPO/venv/bin/hermes" --version | head -n 1)"
+echo "Previous release backup: $backup_bundle"
 echo "Log: $LOG_FILE"

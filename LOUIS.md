@@ -35,3 +35,7 @@ Production machines use `hermes-update-louis`. The updater validates `origin/mai
 The gateway launches updates in an independent transient user service so the updater survives the intentional Gateway stop/restart window. Progress and the final exit code are delivered through durable marker files.
 
 Do not use `git pull upstream main` on a production checkout.
+
+## Release notes
+
+- [Louis Hermes Agent 0.19.0.1](LOUIS_RELEASE_NOTES.md)

@@ -7,11 +7,9 @@ Please reinstall: curl ... install.sh"`` — that script installs a *new*
 host-side Hermes, not an update to the running container, so the message
 was actively misleading.
 
-These tests pin the new behaviour: when ``detect_install_method`` reports
-``"docker"`` (stamped by ``docker/stage2-hook.sh``), both the apply path
-(``cmd_update``) and the check path (``_cmd_update_check``) print the
-``docker pull`` guidance from ``format_docker_update_message`` and exit
-with status 1, without running ``git fetch`` / ``subprocess.run``.
+These tests pin the Louis behaviour: Docker self-update is unsupported until
+Louis publishes a real image, so both paths explain how to rebuild from the
+Louis Dockerfile without invoking git inside the running container.
 """
 
 from __future__ import annotations
@@ -42,7 +40,8 @@ def test_cmd_update_in_docker_prints_guidance_and_exits(
     # Spot-check the key guidance — exhaustive wording is locked in by the
     # config-module test below to keep these CLI tests resilient to copy edits.
     assert "doesn't apply inside the Docker container" in out
-    assert "docker pull nousresearch/hermes-agent:latest" in out
+    assert "does not publish a prebuilt Docker image" in out
+    assert "docker build" in out
 
     # No git invocations — the early-return must beat every git command.
     git_calls = [c for c in mock_run.call_args_list if c.args and c.args[0] and "git" in str(c.args[0][0])]
@@ -62,7 +61,8 @@ def test_cmd_update_check_in_docker_prints_guidance_and_exits(
     assert excinfo.value.code == 1
     out = capsys.readouterr().out
     assert "doesn't apply inside the Docker container" in out
-    assert "docker pull nousresearch/hermes-agent:latest" in out
+    assert "does not publish a prebuilt Docker image" in out
+    assert "docker build" in out
 
     git_calls = [c for c in mock_run.call_args_list if c.args and c.args[0] and "git" in str(c.args[0][0])]
     assert git_calls == [], f"expected no git calls, got: {git_calls}"
@@ -83,7 +83,7 @@ def test_cmd_update_in_docker_ignores_yes_and_force(
     with pytest.raises(SystemExit):
         cmd_update(SimpleNamespace(check=False, yes=True, force=True))
 
-    assert "docker pull" in capsys.readouterr().out
+    assert "docker build" in capsys.readouterr().out
     git_calls = [c for c in mock_run.call_args_list if c.args and c.args[0] and "git" in str(c.args[0][0])]
     assert git_calls == []
 
@@ -114,7 +114,7 @@ def test_cmd_update_check_direct_in_docker(mock_run, _mock_method, capsys):
         _cmd_update_check()
 
     assert excinfo.value.code == 1
-    assert "docker pull" in capsys.readouterr().out
+    assert "docker build" in capsys.readouterr().out
     git_calls = [c for c in mock_run.call_args_list if c.args and c.args[0] and "git" in str(c.args[0][0])]
     assert git_calls == []
 
@@ -186,16 +186,14 @@ def test_format_docker_update_message_contents():
 
     msg = format_docker_update_message()
 
-    # Primary command — the entire reason this message exists.
-    assert "docker pull nousresearch/hermes-agent:latest" in msg
+    assert "docker build -t louis-hermes-agent:local" in msg
+    assert "https://github.com/louisgreen0726/hermes-agent" in msg
+    assert "docker pull nousresearch/hermes-agent" not in msg
 
     # The four key concepts the message must cover:
     assert "restart" in msg.lower(), "must explain that a restart is required"
     assert "--version" in msg, "must show how to verify the new version"
-    assert ":latest" in msg, "must mention tag pinning caveat"
     assert "HERMES_HOME" in msg or "/opt/data" in msg, (
         "must address config persistence across upgrades"
     )
-
-    # Acknowledges that forks exist (build-your-own-image escape hatch).
-    assert "fork" in msg.lower() or "Dockerfile" in msg
+    assert "Dockerfile" in msg

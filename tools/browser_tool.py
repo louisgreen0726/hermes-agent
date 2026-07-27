@@ -68,7 +68,7 @@ from agent.auxiliary_client import call_llm
 from agent.redact import redact_cdp_url
 from hermes_constants import agent_browser_runnable, get_hermes_home
 from utils import env_int, is_truthy_value
-from hermes_cli.config import DEFAULT_CONFIG, cfg_get
+from hermes_cli.config import DEFAULT_CONFIG, cfg_get, format_louis_docker_rebuild_hint
 from hermes_cli._subprocess_compat import windows_hide_flags
 
 # Browser-specific tool keys passed through to the agent-browser subprocess
@@ -369,11 +369,7 @@ def _format_browser_timeout_error(
         )
     elif command == "open" and _is_local_mode():
         if _running_in_docker():
-            hints.append(
-                "The browser daemon may still be starting or Chromium may be "
-                "missing. Pull the latest image: "
-                "docker pull ghcr.io/nousresearch/hermes-agent:latest"
-            )
+            hints.append(format_louis_docker_rebuild_hint("Bundled Chromium"))
         else:
             hints.append(
                 "The browser daemon may still be starting, or Chromium may be "
@@ -1068,11 +1064,7 @@ def _run_chrome_fallback_command(
 
     if not _chromium_installed():
         if _running_in_docker():
-            hint = (
-                "Chrome fallback requires Chromium, but it is missing. "
-                "You're running in Docker — pull the latest image: "
-                "docker pull ghcr.io/nousresearch/hermes-agent:latest"
-            )
+            hint = format_louis_docker_rebuild_hint("Chrome fallback Chromium")
         else:
             hint = (
                 "Chrome fallback requires Chromium, but it is missing. Install it with: "
@@ -2346,11 +2338,7 @@ def _run_browser_command(
         and not _maybe_autoinstall_chromium()
     ):
         if _running_in_docker():
-            hint = (
-                "Chromium browser is missing. You're running in Docker — pull "
-                "the latest image to get the bundled Chromium: "
-                "docker pull ghcr.io/nousresearch/hermes-agent:latest"
-            )
+            hint = format_louis_docker_rebuild_hint("Bundled Chromium")
         else:
             hint = (
                 "Chromium browser is missing. Install it with: "
@@ -4828,11 +4816,7 @@ if __name__ == "__main__":
                 searched = ", ".join(_chromium_search_roots()) or "(no candidate paths)"
                 print(f"     Searched: {searched}")
                 if _running_in_docker():
-                    print(
-                        "     Docker: pull the latest image — the current one "
-                        "predates the bundled Chromium install"
-                    )
-                    print("       docker pull ghcr.io/nousresearch/hermes-agent:latest")
+                    print(f"     {format_louis_docker_rebuild_hint('Bundled Chromium')}")
                 else:
                     print("     Install it with:")
                     print("       npx agent-browser install --with-deps")

@@ -38,6 +38,9 @@ const SUPPORTED_REMOTE_OS = new Set(['Linux', 'Darwin'])
 const DEFAULT_READY_TIMEOUT_MS = 45_000
 const READY_POLL_INTERVAL_MS = 750
 
+const LOUIS_REMOTE_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.sh | bash'
+
 function mintToken() {
   return crypto.randomBytes(32).toString('hex')
 }
@@ -204,7 +207,7 @@ async function locateHermes(ssh, remoteHermesPath) {
 
   const err: any = new Error(
     'Hermes is not installed on the remote host (could not find a `hermes` executable). ' +
-      'Install it on the remote with:  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | sh  ' +
+      `Install it on the remote with:  ${LOUIS_REMOTE_INSTALL_COMMAND}  ` +
       '— or set the Hermes path explicitly in the SSH connection settings.'
   )
 
@@ -882,6 +885,7 @@ export {
   locateHermes,
   LOCKFILE_SCHEMA_VERSION,
   lockfilePath,
+  LOUIS_REMOTE_INSTALL_COMMAND,
   mintToken,
   openForward,
   ownershipDirectory,

@@ -1015,6 +1015,30 @@ class TestCmdUpdateCheckBranchFlag:
         rev_list_cmds = [c for c in commands if "rev-list" in c]
         assert any("origin/main" in c for c in rev_list_cmds), rev_list_cmds
 
+    @patch("hermes_cli.config.detect_install_method", return_value="git")
+    @patch("subprocess.run")
+    def test_check_rejects_non_louis_origin_before_any_fetch(
+        self, mock_run, _mock_method, capsys
+    ):
+        def side_effect(cmd, **kwargs):
+            if cmd[-4:] == ["remote", "get-url", "origin"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout="https://github.com/NousResearch/hermes-agent.git\n",
+                    stderr="",
+                )
+            raise AssertionError(f"non-Louis origin must fail before: {cmd!r}")
+
+        mock_run.side_effect = side_effect
+
+        with pytest.raises(SystemExit) as exc_info:
+            cmd_update(SimpleNamespace(check=True, branch=None))
+
+        assert exc_info.value.code == 1
+        assert "Refusing to check for updates from a non-Louis origin" in capsys.readouterr().out
+        assert mock_run.call_count == 1
+
 
 class TestCmdUpdateZipBranchRefusal:
     """``hermes update --branch=<non-main>`` must refuse on the ZIP fallback path.
@@ -1038,6 +1062,27 @@ class TestCmdUpdateZipBranchRefusal:
         assert "not supported" in out
         # No actual download attempted.
         assert "Downloading latest version" not in out
+
+
+def test_windows_no_git_checkout_routes_directly_to_louis_zip(tmp_path, monkeypatch):
+    from hermes_cli import main as hm
+
+    monkeypatch.setattr(hm, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(hm.sys, "platform", "win32")
+    args = SimpleNamespace(branch="main", force=True, force_venv=True, yes=True)
+
+    with patch.object(hm, "_run_pre_update_backup", return_value=None), \
+         patch.object(hm, "_pause_windows_gateways_for_update", return_value=[]), \
+         patch.object(hm, "_resume_windows_gateways_after_update") as resume, \
+         patch.object(hm, "_update_via_zip") as update_zip, \
+         patch.object(hm, "_get_origin_url") as get_origin, \
+         patch.object(hm, "_discard_lockfile_churn") as discard_lockfiles:
+        hm._cmd_update_impl(args, gateway_mode=False)
+
+    update_zip.assert_called_once_with(args)
+    resume.assert_called_once_with([])
+    get_origin.assert_not_called()
+    discard_lockfiles.assert_not_called()
 
 
 def test_is_termux_env_true_for_termux_prefix():
