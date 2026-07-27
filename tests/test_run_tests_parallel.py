@@ -225,6 +225,37 @@ def _run_runner(probe_dir: Path, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
+def test_collection_uses_private_hermes_home(tmp_path: Path) -> None:
+    """Collection-time imports cannot read or write the caller's profile."""
+    probe_dir = tmp_path / "home-probe"
+    probe_dir.mkdir()
+    marker = tmp_path / "collected-home.txt"
+    (probe_dir / "test_collection_home.py").write_text(
+        textwrap.dedent(
+            f"""
+            import os
+            from pathlib import Path
+
+            COLLECTED_HOME = os.environ.get("HERMES_HOME", "")
+            Path({str(marker)!r}).write_text(COLLECTED_HOME, encoding="utf-8")
+
+            def test_collection_home_exists():
+                assert COLLECTED_HOME
+                assert Path(COLLECTED_HOME).is_dir()
+            """
+        ),
+        encoding="utf-8",
+    )
+    inherited_home = os.environ["HERMES_HOME"]
+
+    proc = _run_runner(probe_dir)
+
+    assert proc.returncode == 0, proc.stdout
+    collected_home = marker.read_text(encoding="utf-8")
+    assert collected_home != inherited_home
+    assert not Path(collected_home).exists()
+
+
 def test_bare_q_flag_passes_through(tmp_path: Path) -> None:
     """A bare ``-q`` (no ``--``) runs clean instead of erroring out."""
     probe_dir = _make_probe_dir(tmp_path)

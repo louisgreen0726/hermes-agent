@@ -34,6 +34,11 @@ Environment:
     HERMES_TEST_WORKERS  Override worker count (default: os.cpu_count())
     HERMES_TEST_PATHS    Override discovery roots (colon-sep, default: 'tests')
 
+Each test-file subprocess receives a private temporary ``HERMES_HOME`` before
+pytest collection starts.  The per-test fixture replaces it again for test
+execution, but this earlier boundary protects module-level imports that cache
+profile paths during collection.
+
 Exit code: 0 if every file's pytest exited 0; 1 otherwise.
 """
 
@@ -42,8 +47,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -306,59 +313,70 @@ def _run_one_file_once(
 ) -> Tuple[Path, int, str, dict[str, int], float]:
     """Single attempt of a per-file pytest subprocess (see _run_one_file)."""
     cmd = [sys.executable, "-m", "pytest", str(file), *pytest_args]
-    
+
     subproc_start = time.monotonic()
-    # launch the pytest process
-    proc = subprocess.Popen(
-        cmd,
-        cwd=repo_root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
-        env=os.environ,
-        # POSIX: place the child at the head of its own process group so
-        # _kill_tree can SIGKILL the group atomically.
-        # Windows: this maps to CREATE_NEW_PROCESS_GROUP in CPython 3.12+;
-        # _kill_tree handles the Windows path via taskkill /F /T.
-        start_new_session=True,
-    )
-
-    # Capture the pgid NOW, before the leader can exit and be reaped. Once
-    # the leader is reaped, os.getpgid(proc.pid) raises ProcessLookupError
-    # even though grandchildren in that group are still alive — defeating
-    # the whole cleanup. None on Windows where the pgid concept doesn't apply.
-    pgid: int | None = None
-    if sys.platform != "win32":
-        try:
-            pgid = os.getpgid(proc.pid)
-        except (ProcessLookupError, PermissionError):
-            pgid = None
-
+    file_home_root = Path(tempfile.mkdtemp(prefix="hermes-test-file-"))
     try:
-        output, _ = proc.communicate(timeout=file_timeout)
-        rc = proc.returncode
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc, pgid=pgid)
-        try:
-            output, _ = proc.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            output = "(file timeout exceeded; output unavailable)"
-        rc = 124  # de facto convention for "killed by timeout".
-        output = (
-            f"({file_timeout:.0f}s exceeded; "
-            f"process tree SIGKILL'd)\n{output}"
-        )
-    except BaseException:
-        # KeyboardInterrupt / runner crash — make sure no zombie
-        # grandchildren outlive us.
-        _kill_tree(proc, pgid=pgid)
-        raise
-    else:
-        # Happy path: pytest exited on its own. Kill the group anyway in
-        # case it left grandchildren behind; already-dead is a no-op.
-        _kill_tree(proc, pgid=pgid)
+        file_home = file_home_root / "hermes_home"
+        file_home.mkdir()
+        child_env = os.environ.copy()
+        child_env["HERMES_HOME"] = str(file_home)
 
-        output +=  "\n"
+        # launch the pytest process
+        proc = subprocess.Popen(
+            cmd,
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=child_env,
+            # POSIX: place the child at the head of its own process group so
+            # _kill_tree can SIGKILL the group atomically.
+            # Windows: this maps to CREATE_NEW_PROCESS_GROUP in CPython 3.12+;
+            # _kill_tree handles the Windows path via taskkill /F /T.
+            start_new_session=True,
+        )
+
+        # Capture the pgid NOW, before the leader can exit and be reaped. Once
+        # the leader is reaped, os.getpgid(proc.pid) raises ProcessLookupError
+        # even though grandchildren in that group are still alive — defeating
+        # the whole cleanup. None on Windows where the pgid concept doesn't apply.
+        pgid: int | None = None
+        if sys.platform != "win32":
+            try:
+                pgid = os.getpgid(proc.pid)
+            except (ProcessLookupError, PermissionError):
+                pgid = None
+
+        try:
+            output, _ = proc.communicate(timeout=file_timeout)
+            rc = proc.returncode
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc, pgid=pgid)
+            try:
+                output, _ = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                output = "(file timeout exceeded; output unavailable)"
+            rc = 124  # de facto convention for "killed by timeout".
+            output = (
+                f"({file_timeout:.0f}s exceeded; "
+                f"process tree SIGKILL'd)\n{output}"
+            )
+        except BaseException:
+            # KeyboardInterrupt / runner crash — make sure no zombie
+            # grandchildren outlive us.
+            _kill_tree(proc, pgid=pgid)
+            raise
+        else:
+            # Happy path: pytest exited on its own. Kill the group anyway in
+            # case it left grandchildren behind; already-dead is a no-op.
+            _kill_tree(proc, pgid=pgid)
+
+            output += "\n"
+    finally:
+        shutil.rmtree(file_home_root, ignore_errors=True)
 
     if rc == 5:
         # No tests collected in THIS file — legitimate per-file: a

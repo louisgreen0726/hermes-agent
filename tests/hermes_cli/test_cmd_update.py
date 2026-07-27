@@ -47,6 +47,23 @@ def mock_args():
     return SimpleNamespace()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_update_markers(tmp_path, monkeypatch):
+    """Keep simulated interrupted-update breadcrumbs out of the checkout."""
+    from hermes_cli import main as hm
+
+    marker_root = tmp_path / "install-markers"
+    marker_root.mkdir()
+    monkeypatch.setattr(
+        hm, "_update_marker_path", lambda: marker_root / ".update-incomplete"
+    )
+    monkeypatch.setattr(
+        hm,
+        "_lazy_refresh_marker_path",
+        lambda: marker_root / ".lazy-refresh-incomplete",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Managed-uv compatibility for tests that patch shutil.which
 # ---------------------------------------------------------------------------

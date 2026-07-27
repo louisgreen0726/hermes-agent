@@ -562,13 +562,14 @@ def _wal_is_usable() -> bool:
 
     IMPORTANT: this must NOT import ``hermes_state``. That module computes
     ``DEFAULT_DB_PATH`` from ``get_hermes_home()`` at import time, so importing
-    it during collection — before the per-test ``_isolate_hermes_home`` fixture
-    redirects ``HERMES_HOME`` — permanently caches the DEVELOPER'S REAL
-    ``~/.hermes/state.db`` for the whole session. Tests then read live
-    production sessions instead of a tempdir. The version predicate is
-    duplicated from ``hermes_state._is_sqlite_wal_reset_vulnerable`` (upstream
-    fixed ranges, stable) rather than imported, and
-    ``test_conftest_wal_gate.py`` pins the two implementations in agreement.
+    it during collection — before the per-test ``_hermetic_environment``
+    fixture redirects ``HERMES_HOME`` — permanently caches one shared path for
+    the whole file. The canonical runner pre-seeds a private collection-time
+    home, but direct pytest can still cache the developer's real
+    ``~/.hermes/state.db``. The version predicate is duplicated from
+    ``hermes_state._is_sqlite_wal_reset_vulnerable`` (upstream fixed ranges,
+    stable) rather than imported, and ``test_conftest_wal_gate.py`` pins the
+    two implementations in agreement.
     """
     info = sqlite3.sqlite_version_info
     if info < (3, 7, 0):
