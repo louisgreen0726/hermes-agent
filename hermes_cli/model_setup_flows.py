@@ -129,6 +129,16 @@ def _prune_replaced_custom_model_config_credentials(
         return
 
 
+def _activate_named_custom_provider(model_cfg: dict, provider_name: str) -> None:
+    """Point the active model at a named provider without duplicating routing."""
+    from hermes_cli.providers import custom_provider_slug
+
+    model_cfg["provider"] = custom_provider_slug(provider_name)
+    clear_model_endpoint_credentials(model_cfg, clear_base_url=True)
+    model_cfg.pop("key_env", None)
+    model_cfg.pop("transport", None)
+
+
 def _prompt_auth_credentials_choice(title: str) -> str:
     """Prompt for reuse / reauthenticate / cancel with the standard radio UI.
 
@@ -1054,7 +1064,7 @@ def _model_flow_custom(config):
         print("Endpoint saved. Use `/model` in chat or `hermes model` to set a model.")
 
     # Auto-save to custom_providers so it appears in the menu next time
-    _save_custom_provider(
+    saved_provider_name = _save_custom_provider(
         effective_url,
         effective_key,
         model_name or "",
@@ -1065,8 +1075,24 @@ def _model_flow_custom(config):
     )
     _prune_replaced_custom_model_config_credentials(
         effective_url,
-        provider_name=display_name,
+        provider_name=saved_provider_name or display_name,
     )
+
+    if model_name:
+        # The saved entry owns its endpoint, credentials, and API mode. Point
+        # the active model at that entry so codex_responses is not discarded by
+        # the bare-custom stale-config guard during runtime resolution.
+        cfg = load_config()
+        model = cfg.get("model")
+        if not isinstance(model, dict):
+            model = {"default": model} if model else {}
+            cfg["model"] = model
+        _activate_named_custom_provider(
+            model,
+            saved_provider_name or display_name,
+        )
+        save_config(cfg)
+        config["model"] = dict(model)
 
 
 def _model_flow_azure_foundry(config, current_model=""):
@@ -1444,7 +1470,7 @@ def _model_flow_named_custom(config, provider_info):
     If a model was previously saved, it is pre-selected in the menu.
     Falls back to the saved model if probing fails.
     """
-    from hermes_cli.main import _custom_provider_api_key_config_value, _custom_provider_base_url_config_value, _save_custom_provider
+    from hermes_cli.main import _custom_provider_api_key_config_value, _save_custom_provider
     from hermes_cli.auth import _save_model_choice, deactivate_provider
     from hermes_cli.config import load_config, save_config
     from hermes_cli.models import fetch_api_models
@@ -1571,23 +1597,7 @@ def _model_flow_named_custom(config, provider_info):
     if not isinstance(model, dict):
         model = {"default": model} if model else {}
         cfg["model"] = model
-    if provider_key:
-        model["provider"] = "custom:" + provider_key.strip().lower().replace(" ", "-")
-        model.pop("base_url", None)
-        model.pop("api_key", None)
-    else:
-        model["provider"] = "custom"
-        model["base_url"] = _custom_provider_base_url_config_value(
-            provider_info, base_url
-        )
-        if config_api_key:
-            model["api_key"] = config_api_key
-    # Apply api_mode from custom_providers entry, or clear stale value
-    custom_api_mode = provider_info.get("api_mode", "")
-    if custom_api_mode:
-        model["api_mode"] = custom_api_mode
-    else:
-        model.pop("api_mode", None)  # let runtime auto-detect from URL
+    _activate_named_custom_provider(model, provider_key or name)
     save_config(cfg)
     deactivate_provider()
 
@@ -1624,7 +1634,13 @@ def _model_flow_named_custom(config, provider_info):
                 save_config(cfg)
     else:
         # Save model name to the custom_providers entry for next time
-        _save_custom_provider(base_url, config_api_key, model_name, api_mode=api_mode)
+        _save_custom_provider(
+            base_url,
+            config_api_key,
+            model_name,
+            name=name,
+            api_mode=api_mode,
+        )
 
     print(f"\n✅ Model set to: {model_name}")
     print(f"   Provider: {name} ({base_url})")

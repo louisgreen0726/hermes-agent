@@ -203,9 +203,18 @@ class TestProviderPersistsAfterModelSave:
         config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
         model = config.get("model")
         assert isinstance(model, dict)
-        assert model.get("provider") == "custom"
-        assert model.get("base_url") == "https://packy.example.com/v1"
-        assert model.get("api_mode") == "codex_responses"
+        assert model.get("provider") == "custom:packy"
+        assert "base_url" not in model
+        assert "api_key" not in model
+        assert "api_mode" not in model
+
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        runtime = resolve_runtime_provider()
+        assert runtime["requested_provider"] == "custom:packy"
+        assert runtime["base_url"] == "https://packy.example.com/v1"
+        assert runtime["api_key"] == "sk-test"
+        assert runtime["api_mode"] == "codex_responses"
 
     def test_named_custom_provider_with_builtin_slug_persists_custom_prefix(
         self, config_home, monkeypatch

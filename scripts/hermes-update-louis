@@ -12,6 +12,7 @@ SCRIPT_PATH="${BASH_SOURCE[0]}"
 GATEWAY_OUTPUT="${HERMES_GATEWAY_UPDATE_OUTPUT:-}"
 GATEWAY_EXIT_CODE="${HERMES_GATEWAY_UPDATE_EXIT_CODE:-}"
 TEST_PATHS=(
+  tests/cli/test_cli_provider_resolution.py
   tests/gateway/test_telegram_native_guest_mode.py
   tests/gateway/test_delivery_ledger_producer.py
   tests/gateway/test_telegram_group_gating.py
@@ -26,11 +27,14 @@ TEST_PATHS=(
   tests/gateway/test_update_streaming.py
   tests/hermes_cli/test_banner_git_state.py
   tests/hermes_cli/test_cmd_update.py
+  tests/hermes_cli/test_custom_provider_model_switch.py
   tests/hermes_cli/test_louis_distribution.py
   tests/hermes_cli/test_louis_manager.py
   tests/hermes_cli/test_louis_updater.py
   tests/hermes_cli/test_managed_installs.py
   tests/hermes_cli/test_model_catalog.py
+  tests/hermes_cli/test_model_provider_persistence.py
+  tests/hermes_cli/test_runtime_provider_resolution.py
   tests/hermes_cli/test_update_check.py
   tests/test_project_metadata.py
   tests/test_packaging_metadata.py

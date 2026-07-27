@@ -802,16 +802,19 @@ def test_model_flow_custom_persists_selected_api_mode(monkeypatch):
     )
     monkeypatch.setattr(
         "hermes_cli.main._save_custom_provider",
-        lambda base_url, api_key="", model="", context_length=None, name=None, api_mode=None, key_env="": captured_provider.update(
-            {
-                "base_url": base_url,
-                "api_key": api_key,
-                "model": model,
-                "context_length": context_length,
-                "name": name,
-                "api_mode": api_mode,
-                "key_env": key_env,
-            }
+        lambda base_url, api_key="", model="", context_length=None, name=None, api_mode=None, key_env="": (
+            captured_provider.update(
+                {
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "model": model,
+                    "context_length": context_length,
+                    "name": name,
+                    "api_mode": api_mode,
+                    "key_env": key_env,
+                }
+            )
+            or name
         ),
     )
 
@@ -829,14 +832,14 @@ def test_model_flow_custom_persists_selected_api_mode(monkeypatch):
 
     hermes_main._model_flow_custom({"model": {"provider": "custom"}})
 
-    assert saved_cfg["model"]["provider"] == "custom"
-    assert saved_cfg["model"]["base_url"] == "https://codex.example.com/v1"
-    assert saved_cfg["model"]["api_mode"] == "codex_responses"
+    assert saved_cfg["model"]["provider"] == "custom:codex.example.com"
+    assert "base_url" not in saved_cfg["model"]
+    assert "api_key" not in saved_cfg["model"]
+    assert "api_mode" not in saved_cfg["model"]
     assert captured_provider["api_mode"] == "codex_responses"
 
     # The key itself goes to .env; config.yaml only references it (#69449).
     key_env = captured_provider["key_env"]
-    assert saved_cfg["model"]["api_key"] == f"${{{key_env}}}"
     assert saved_env[key_env] == "test-key"
 
 
@@ -929,10 +932,57 @@ def test_save_custom_provider_uses_provided_name(monkeypatch, tmp_path):
         saved.update(cfg)
     monkeypatch.setattr("hermes_cli.config.save_config", _save)
 
-    _save_custom_provider("http://localhost:11434/v1", name="Ollama")
+    saved_name = _save_custom_provider("http://localhost:11434/v1", name="Ollama")
     entries = saved.get("custom_providers", [])
     assert len(entries) == 1
     assert entries[0]["name"] == "Ollama"
+    assert saved_name == "Ollama"
+
+
+def test_save_custom_provider_returns_existing_name_when_url_matches(monkeypatch):
+    from hermes_cli.main import _save_custom_provider
+
+    existing = {
+        "custom_providers": [
+            {
+                "name": "Canonical Endpoint",
+                "base_url": "https://proxy.example.com/v1",
+            }
+        ]
+    }
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: existing)
+    monkeypatch.setattr("hermes_cli.config.save_config", lambda cfg: None)
+
+    saved_name = _save_custom_provider(
+        "https://proxy.example.com/v1/",
+        name="Replacement Label",
+    )
+
+    assert saved_name == "Canonical Endpoint"
+
+
+def test_save_custom_provider_names_legacy_unnamed_url_match(monkeypatch):
+    from hermes_cli.main import _save_custom_provider
+
+    existing = {
+        "custom_providers": [
+            {"base_url": "https://proxy.example.com/v1"}
+        ]
+    }
+    saved = {}
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: existing)
+    monkeypatch.setattr(
+        "hermes_cli.config.save_config",
+        lambda cfg: saved.update(cfg),
+    )
+
+    saved_name = _save_custom_provider(
+        "https://proxy.example.com/v1",
+        name="Recovered Endpoint",
+    )
+
+    assert saved_name == "Recovered Endpoint"
+    assert saved["custom_providers"][0]["name"] == "Recovered Endpoint"
 
 
 def test_save_custom_provider_references_the_key_instead_of_inlining_it(monkeypatch, tmp_path):

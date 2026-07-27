@@ -39,9 +39,9 @@ class TestCustomProviderModelSwitch:
         """Switching custom endpoints must not leave the old model.api_key
         credential selectable from the previous endpoint's pool."""
         import yaml
-        from agent.credential_pool import load_pool
         from hermes_cli.auth import read_credential_pool, write_credential_pool
         from hermes_cli.main import _model_flow_custom
+        from hermes_cli.runtime_provider import resolve_runtime_provider
 
         config_path = config_home / "config.yaml"
         config_path.write_text(
@@ -87,7 +87,10 @@ class TestCustomProviderModelSwitch:
             },
         ), \
              patch("hermes_cli.secret_prompt.masked_secret_prompt", return_value="sk-new"), \
-             patch("hermes_cli.main._prompt_custom_api_mode_selection", return_value=""), \
+             patch(
+                 "hermes_cli.main._prompt_custom_api_mode_selection",
+                 return_value="codex_responses",
+             ), \
              patch(
                  "builtins.input",
                  side_effect=[
@@ -108,13 +111,16 @@ class TestCustomProviderModelSwitch:
         ]
         assert old_sources == ["manual"]
 
-        new_pool = load_pool("custom:new-endpoint")
-        selected = new_pool.select()
-        assert selected is not None
-        assert selected.access_token == "sk-new"
-
         config = yaml.safe_load(config_path.read_text()) or {}
-        assert config["model"]["base_url"] == "https://new.example.test/v1"
+        assert config["model"]["provider"] == "custom:new-endpoint"
+        assert "base_url" not in config["model"]
+        assert "api_key" not in config["model"]
+
+        runtime = resolve_runtime_provider()
+        assert runtime["requested_provider"] == "custom:new-endpoint"
+        assert runtime["base_url"] == "https://new.example.test/v1"
+        assert runtime["api_key"] == "sk-new"
+        assert runtime["api_mode"] == "codex_responses"
 
     def test_saved_model_still_probes_endpoint(self, config_home):
         """When a model is already saved, the function must still call
@@ -238,7 +244,10 @@ class TestCustomProviderModelSwitch:
         config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
         model = config.get("model")
         assert isinstance(model, dict)
-        assert model.get("api_mode") == "anthropic_messages"
+        assert model.get("provider") == "custom:anthropic-proxy"
+        assert "base_url" not in model
+        assert "api_key" not in model
+        assert "api_mode" not in model
 
     def test_api_mode_cleared_when_not_specified(self, config_home):
         """When custom_providers entry has no api_mode, stale api_mode is removed."""
@@ -267,7 +276,7 @@ class TestCustomProviderModelSwitch:
         assert isinstance(model, dict)
         assert "api_mode" not in model, "Stale api_mode should be removed"
 
-    def test_env_template_api_key_is_preserved_in_model_config(self, config_home, monkeypatch):
+    def test_env_template_api_key_stays_on_named_provider(self, config_home, monkeypatch):
         """Selecting an env-backed custom provider must not inline the secret."""
         import yaml
         from hermes_cli.main import _model_flow_named_custom
@@ -305,7 +314,8 @@ class TestCustomProviderModelSwitch:
             timeout=8.0,
         )
         config = yaml.safe_load(config_path.read_text()) or {}
-        assert config["model"]["api_key"] == "${EXAMPLE_PROVIDER_API_KEY}"
+        assert config["model"]["provider"] == "custom:example-provider"
+        assert "api_key" not in config["model"]
         assert config["custom_providers"][0]["api_key"] == "${EXAMPLE_PROVIDER_API_KEY}"
         assert "sk-live-example-provider" not in config_path.read_text()
 
@@ -341,7 +351,8 @@ class TestCustomProviderModelSwitch:
             _model_flow_named_custom({}, provider_info)
 
         config = yaml.safe_load(config_path.read_text()) or {}
-        assert config["model"]["api_key"] == "${EXAMPLE_PROVIDER_API_KEY}"
+        assert config["model"]["provider"] == "custom:example-provider"
+        assert "api_key" not in config["model"]
         assert config["custom_providers"][0]["key_env"] == "EXAMPLE_PROVIDER_API_KEY"
         assert "sk-live-example-provider" not in config_path.read_text()
 
@@ -350,7 +361,7 @@ class TestCustomProviderModelSwitch:
     ):
         """Integration regression: when BOTH ``base_url`` and ``api_key`` use
         ``${VAR}`` templates (the Discord-reported NeuralWatt case), the picker
-        must still preserve the env reference in ``model.api_key``.
+        must keep the env references on the named provider entry.
 
         The earlier lookup went through ``get_compatible_custom_providers``
         which dropped entries whose ``base_url`` was an env-ref template
@@ -406,7 +417,9 @@ class TestCustomProviderModelSwitch:
         # But config.yaml must keep the env reference, not the plaintext secret.
         saved = config_path.read_text()
         config = yaml.safe_load(saved) or {}
-        assert config["model"]["api_key"] == "${NEURALWATT_API_KEY}"
+        assert config["model"]["provider"] == "custom:neuralwatt"
+        assert "base_url" not in config["model"]
+        assert "api_key" not in config["model"]
         assert config["custom_providers"][0]["api_key"] == "${NEURALWATT_API_KEY}"
         assert "sk-live-neuralwatt-secret" not in saved
 
@@ -517,8 +530,11 @@ class TestCustomProviderModelSwitch:
 
         saved = config_path.read_text()
         config = yaml.safe_load(saved) or {}
-        assert config["model"]["base_url"] == "${NEURALWATT_API_BASE}"
-        assert config["model"]["api_key"] == "${NEURALWATT_API_KEY}"
+        assert config["model"]["provider"] == "custom:neuralwatt"
+        assert "base_url" not in config["model"]
+        assert "api_key" not in config["model"]
+        assert config["custom_providers"][0]["base_url"] == "${NEURALWATT_API_BASE}"
+        assert config["custom_providers"][0]["api_key"] == "${NEURALWATT_API_KEY}"
         assert "https://api.neuralwatt.com/v1" not in saved
         assert "sk-live-neuralwatt-secret" not in saved
 

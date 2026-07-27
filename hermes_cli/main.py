@@ -3978,7 +3978,7 @@ def _custom_provider_base_url_config_value(provider_info, resolved_base_url=""):
 def _save_custom_provider(
     base_url, api_key="", model="", context_length=None, name=None, api_mode=None,
     key_env=""
-):
+) -> str:
     """Save a custom endpoint to custom_providers in config.yaml.
 
     Deduplicates by base_url — if the URL already exists, updates the
@@ -4001,6 +4001,12 @@ def _save_custom_provider(
             "/"
         ) == base_url.rstrip("/"):
             changed = False
+            saved_name = str(
+                entry.get("name") or name or _auto_provider_name(base_url)
+            )
+            if not str(entry.get("name") or "").strip():
+                entry["name"] = saved_name
+                changed = True
             if model and entry.get("model") != model:
                 entry["model"] = model
                 changed = True
@@ -4025,7 +4031,7 @@ def _save_custom_provider(
             if changed:
                 cfg["custom_providers"] = providers
                 save_config(cfg)
-            return  # already saved, updated if needed
+            return saved_name
 
     # Use provided name or auto-generate from URL
     if not name:
@@ -4047,6 +4053,7 @@ def _save_custom_provider(
     cfg["custom_providers"] = providers
     save_config(cfg)
     print(f'  💾 Saved to custom providers as "{name}" (edit in config.yaml)')
+    return str(name)
 
 
 

@@ -6,15 +6,15 @@ This repository is the production source for the Louis distribution of Hermes Ag
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.19.0.1`
-- Python package version: `0.19.0+Louis.1`
+- User-facing version: `Louis-0.19.0.2`
+- Python package version: `0.19.0+Louis.2`
 - Upstream project: `https://github.com/NousResearch/hermes-agent`
 
 The project is based on Hermes Agent by Nous Research and remains distributed under the MIT License. It is an independently maintained fork and is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline remains `Louis-0.19.0.1`.
+- The versioned baseline is `Louis-0.19.0.2`.
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -31,16 +31,13 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.19.0.1 baseline carries:
+The versioned 0.19.0.2 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
 - CJK Rich Message delivery for ordinary replies.
 - Rich table consistency for cron and standalone sends.
 - Regression coverage for Telegram routing, authorization, rich delivery, threads, proxy mode, and delivery ledger behavior.
-
-Current `main` additionally carries:
-
 - A native management center for models, providers, Gateway services,
   diagnostics, logs, and protected Louis updates.
 - Safe migration away from the legacy one-provider-per-model layout.
@@ -48,6 +45,8 @@ Current `main` additionally carries:
   endpoints.
 - Stable systemd service generation across operator-shell and Gateway runtime
   environments.
+- Named custom-provider activation that preserves the provider-owned Responses,
+  Chat Completions, or Anthropic transport at runtime.
 
 ## Management center
 
@@ -99,4 +98,5 @@ Do not use `git pull upstream main` on a production checkout.
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.19.0.2](docs/releases/LOUIS_0.19.0.2.md)
 - [Louis Hermes Agent 0.19.0.1 baseline](docs/releases/LOUIS_0.19.0.1.md)

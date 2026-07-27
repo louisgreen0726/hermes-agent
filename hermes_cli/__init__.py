@@ -16,7 +16,7 @@ import sys
 
 __upstream_version__ = "0.19.0"
 __upstream_release_date__ = "2026.7.20"
-__version__ = "Louis-0.19.0.1"
+__version__ = "Louis-0.19.0.2"
 __release_date__ = "2026.7.27"
 
 

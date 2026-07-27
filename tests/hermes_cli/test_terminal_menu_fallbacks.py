@@ -126,6 +126,7 @@ def test_named_custom_provider_model_picker_falls_back_on_menu_runtime_error(tmp
     )
 
     reloaded = load_config()
-    assert reloaded["model"]["provider"] == "custom"
-    assert reloaded["model"]["base_url"] == "http://localhost:8000/v1"
+    assert reloaded["model"]["provider"] == "custom:local"
+    assert "base_url" not in reloaded["model"]
     assert reloaded["model"]["default"] == "model-b"
+    assert reloaded["custom_providers"][0]["base_url"] == "http://localhost:8000/v1"
