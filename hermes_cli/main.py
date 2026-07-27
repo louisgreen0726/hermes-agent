@@ -433,6 +433,7 @@ from hermes_cli.subcommands.cron import build_cron_parser
 from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
+from hermes_cli.subcommands.manage import build_manage_parser
 from hermes_cli.subcommands.setup import build_setup_parser
 
 from hermes_cli.subcommands.whatsapp import build_whatsapp_parser
@@ -4467,6 +4468,13 @@ def cmd_status(args):
     from hermes_cli.status import show_status
 
     show_status(args)
+
+
+def cmd_manage(args):
+    """Open the Hermes-Louis management center."""
+    from hermes_cli.louis_manager import run_manage_command
+
+    return run_manage_command(args)
 
 
 def cmd_cron(args):
@@ -14267,7 +14275,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "dump", "egress", "fallback", "gateway", "hooks", "import", "insights",
         "gui", "desktop", "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate", "moa",
         "journey", "memory-graph", "learning",
-        "model", "pairing", "pets", "plugins", "portal", "profile",
+        "manage", "model", "pairing", "pets", "plugins", "portal", "profile",
         "project", "proxy",
         "prompt-size",
         "send", "sessions", "setup",
@@ -14808,6 +14816,11 @@ def main():
     # model command  (parser built in hermes_cli/subcommands/model.py)
     # =========================================================================
     build_model_parser(subparsers, cmd_model=cmd_model)
+
+    # =========================================================================
+    # manage command (Hermes-Louis native management center)
+    # =========================================================================
+    build_manage_parser(subparsers, cmd_manage=cmd_manage)
 
     from hermes_cli.moa_cmd import cmd_moa
 

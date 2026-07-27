@@ -27,6 +27,7 @@ TEST_PATHS=(
   tests/hermes_cli/test_banner_git_state.py
   tests/hermes_cli/test_cmd_update.py
   tests/hermes_cli/test_louis_distribution.py
+  tests/hermes_cli/test_louis_manager.py
   tests/hermes_cli/test_louis_updater.py
   tests/hermes_cli/test_managed_installs.py
   tests/hermes_cli/test_model_catalog.py
@@ -123,6 +124,33 @@ PY
   )
 }
 
+install_manage_launcher() {
+  local link_dir="${HERMES_COMMAND_LINK_DIR:-}"
+  if [[ -z "$link_dir" ]]; then
+    local sibling_dir
+    sibling_dir="$(dirname "$SCRIPT_PATH")"
+    if [[ -x "$sibling_dir/hermes" ]]; then
+      link_dir="$sibling_dir"
+    else
+      echo "Louis manager launcher: no managed command directory detected; skipping PATH shim."
+      return 0
+    fi
+  fi
+
+  mkdir -p "$link_dir"
+  local launcher="$link_dir/hermes-manage"
+  local launcher_tmp="$launcher.tmp.$$"
+  cat > "$launcher_tmp" <<EOF
+#!/usr/bin/env bash
+unset PYTHONPATH
+unset PYTHONHOME
+exec "$REPO/venv/bin/hermes" manage "\$@"
+EOF
+  chmod +x "$launcher_tmp"
+  mv -f "$launcher_tmp" "$launcher"
+  echo "Louis manager launcher installed: $launcher"
+}
+
 rollback_activation() {
   echo "Rolling back to previous Louis release $old_sha..."
   if [[ "$gateway_was_active" -eq 1 ]]; then
@@ -189,6 +217,7 @@ echo "Candidate target:   $target_sha"
 
 if [[ "$old_sha" == "$target_sha" && "$MODE" != dry-run ]]; then
   echo "Already running the current Louis release."
+  install_manage_launcher
   exit 0
 fi
 if ! git -C "$REPO" merge-base --is-ancestor "$old_sha" "$target_sha"; then
@@ -281,6 +310,7 @@ printf 'updated_at=%s\nprevious_commit=%s\ntarget_commit=%s\nbackup_bundle=%s\nl
   "$(date -Is)" "$old_sha" "$target_sha" "$backup_bundle" "$LOG_FILE" > "$BACKUP_DIR/STATUS"
 activation_completed=1
 mutated_dependencies=0
+install_manage_launcher
 echo "SUCCESS"
 echo "Release: $(git -C "$REPO" rev-parse --short HEAD)"
 echo "Version: $("$REPO/venv/bin/hermes" --version | head -n 1)"

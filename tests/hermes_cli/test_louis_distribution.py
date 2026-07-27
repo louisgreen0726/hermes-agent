@@ -62,3 +62,17 @@ def test_model_catalog_fallbacks_stay_with_louis_release_repository():
         assert parsed.path.lower().startswith(
             "/louisgreen0726/hermes-agent/"
         )
+
+
+def test_management_center_is_packaged_and_installed():
+    import tomllib
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        metadata = tomllib.load(handle)
+    assert metadata["project"]["scripts"]["hermes-manage"] == (
+        "hermes_cli.subcommands.manage:entrypoint"
+    )
+
+    installer = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    assert 'rm -f "$command_link_dir/hermes-manage"' in installer
+    assert 'exec "$HERMES_BIN" manage "\\$@"' in installer

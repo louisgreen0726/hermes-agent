@@ -101,6 +101,210 @@ def _declared_model_ids(value: Any) -> list[str]:
     return ids
 
 
+def _custom_provider_display_prefix(display_name: Any, entry: Any) -> str:
+    """Recognize a candidate legacy ``Provider/model-id`` display prefix.
+
+    The slash is only treated as a separator when the complete suffix matches a
+    model ID declared by that same entry. Callers additionally require a
+    repeated prefix before collapsing slash names in the picker.
+    """
+    name = str(display_name or "").strip()
+    if "/" not in name or not isinstance(entry, dict):
+        return name
+
+    prefix, suffix = name.split("/", 1)
+    prefix = prefix.strip()
+    suffix = suffix.strip()
+    if not prefix or not suffix:
+        return name
+
+    configured_models = []
+    default_model = entry.get("default_model", "") or entry.get("model", "")
+    if isinstance(default_model, str) and default_model.strip():
+        configured_models.append(default_model.strip())
+    configured_models.extend(_declared_model_ids(entry.get("models", [])))
+    return prefix if suffix in configured_models else name
+
+
+def _custom_provider_group_prefix(
+    display_name: Any,
+    entry: Any,
+    *,
+    collapse_legacy_slash: bool,
+) -> str:
+    """Return the picker label shared by per-model provider entries."""
+    name = str(display_name or "").strip()
+    prefix = _custom_provider_display_prefix(name, entry)
+    if not collapse_legacy_slash and prefix != name:
+        prefix = name
+    for separator in ("—", " - "):
+        if separator in prefix:
+            prefix = prefix.split(separator, 1)[0].strip()
+            break
+    return prefix or name
+
+
+def _freeze_custom_provider_group_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(
+            sorted(
+                (str(key), _freeze_custom_provider_group_value(item))
+                for key, item in value.items()
+            )
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_custom_provider_group_value(item) for item in value)
+    if isinstance(value, set):
+        frozen = (_freeze_custom_provider_group_value(item) for item in value)
+        return tuple(sorted(frozen, key=repr))
+    return value
+
+
+def _custom_provider_picker_group_key(
+    entry: dict[str, Any], display_prefix: str
+) -> tuple[Any, ...]:
+    """Return the full non-model identity used for custom picker grouping."""
+    endpoint = str(
+        entry.get("base_url") or entry.get("url") or entry.get("api") or ""
+    ).strip().rstrip("/")
+    settings = dict(entry)
+    for key in (
+        "name",
+        "model",
+        "default_model",
+        "models",
+        "base_url",
+        "url",
+        "api",
+        "discover_models",
+    ):
+        settings.pop(key, None)
+    return (
+        endpoint,
+        _freeze_custom_provider_group_value(settings),
+        display_prefix.casefold(),
+    )
+
+
+def _resolve_grouped_custom_provider(
+    explicit_provider: str,
+    model_name: str,
+    custom_providers: Optional[list],
+) -> tuple[str, str, str] | None:
+    """Resolve a grouped picker row back to its concrete provider entry.
+
+    Legacy manager entries (``Provider/model-id``) and Hermes' older
+    per-model display names (``Provider — model-id``) are grouped in the picker.
+    The runtime resolver still needs the original entry slug so it can load the
+    correct endpoint and credentials. A match is accepted only when exactly one
+    concrete entry in the requested display group declares the selected model.
+    """
+    requested = str(explicit_provider or "").strip().lower()
+    selected = str(model_name or "").strip()
+    if not requested.startswith("custom:") or not selected:
+        return None
+
+    legacy_slash_counts: dict[str, int] = {}
+    for entry in custom_providers or []:
+        if not isinstance(entry, dict):
+            continue
+        raw_name = str(entry.get("name") or "").strip()
+        legacy_prefix = _custom_provider_display_prefix(raw_name, entry)
+        if legacy_prefix != raw_name:
+            key = legacy_prefix.casefold()
+            legacy_slash_counts[key] = legacy_slash_counts.get(key, 0) + 1
+
+    from collections import OrderedDict
+
+    groups: "OrderedDict[tuple[Any, ...], dict[str, Any]]" = OrderedDict()
+    first_group_by_concrete_slug: dict[str, tuple[Any, ...]] = {}
+    for entry in custom_providers or []:
+        if not isinstance(entry, dict):
+            continue
+        raw_name = str(entry.get("name") or "").strip()
+        if not raw_name:
+            continue
+        legacy_prefix = _custom_provider_display_prefix(raw_name, entry)
+        group_name = _custom_provider_group_prefix(
+            raw_name,
+            entry,
+            collapse_legacy_slash=(
+                legacy_slash_counts.get(legacy_prefix.casefold(), 0) >= 2
+            ),
+        )
+        if group_name == raw_name:
+            continue
+        group_key = _custom_provider_picker_group_key(entry, group_name)
+        group = groups.setdefault(
+            group_key,
+            {"name": group_name, "entries": []},
+        )
+        group["entries"].append(entry)
+        concrete_slug = custom_provider_slug(raw_name).lower()
+        first_group_by_concrete_slug.setdefault(concrete_slug, group_key)
+
+    used_slugs: set[str] = set()
+    selected_group: tuple[tuple[Any, ...], dict[str, Any]] | None = None
+    for group_key, group in groups.items():
+        base_slug = custom_provider_slug(group["name"])
+        group_slug = base_slug
+        suffix = 2
+        while group_slug.lower() in used_slugs:
+            group_slug = f"{base_slug}-{suffix}"
+            suffix += 1
+        used_slugs.add(group_slug.lower())
+        if group_slug.lower() == requested:
+            selected_group = (group_key, group)
+            break
+
+    if selected_group is None:
+        return None
+
+    selected_group_key, group = selected_group
+    selected_model = selected
+    selected_candidates = {selected.lower()}
+    if "/" in selected:
+        selected_prefix, selected_tail = selected.split("/", 1)
+        if selected_prefix.strip().lower() == str(group["name"]).lower():
+            selected_model = selected_tail.strip()
+            selected_candidates.add(selected_model.lower())
+
+    chosen_entry = None
+    configured_model = None
+    for entry in group["entries"]:
+        declared = _declared_model_ids(entry.get("model"))
+        declared.extend(
+            model_id
+            for model_id in _declared_model_ids(entry.get("default_model"))
+            if model_id.lower() not in {item.lower() for item in declared}
+        )
+        declared.extend(
+            model_id
+            for model_id in _declared_model_ids(entry.get("models", []))
+            if model_id.lower() not in {item.lower() for item in declared}
+        )
+        configured_model = next(
+            (
+                model_id
+                for model_id in declared
+                if model_id.lower() in selected_candidates
+            ),
+            None,
+        )
+        if configured_model is not None:
+            chosen_entry = entry
+            break
+
+    if chosen_entry is None:
+        chosen_entry = group["entries"][0]
+        configured_model = selected_model
+
+    concrete_slug = custom_provider_slug(str(chosen_entry.get("name") or ""))
+    if first_group_by_concrete_slug.get(concrete_slug.lower()) != selected_group_key:
+        return None
+    return concrete_slug, str(group["name"]), configured_model
+
+
 def _save_discovered_models_to_config(
     api_url: str, model_ids: list[str]
 ) -> None:
@@ -1061,6 +1265,7 @@ def switch_model(
     new_model = raw_input.strip()
     target_provider = current_provider
     resolved_moa_preset = False
+    grouped_provider_label = ""
 
     # =================================================================
     # PATH A: Explicit --provider given
@@ -1072,6 +1277,19 @@ def switch_model(
             user_providers,
             custom_providers,
         )
+        if pdef is None:
+            grouped_match = _resolve_grouped_custom_provider(
+                explicit_provider,
+                new_model,
+                custom_providers,
+            )
+            if grouped_match is not None:
+                concrete_provider, grouped_provider_label, new_model = grouped_match
+                pdef = resolve_provider_full(
+                    concrete_provider,
+                    user_providers,
+                    custom_providers,
+                )
         if pdef is None and explicit_provider.strip().lower() == "custom":
             pdef = _bare_custom_provider_def(current_base_url)
         if pdef is None:
@@ -1370,6 +1588,8 @@ def switch_model(
         )
         if custom_pdef is not None:
             provider_label = custom_pdef.name
+    if grouped_provider_label:
+        provider_label = grouped_provider_label
 
     # --- Resolve credentials ---
     api_key = current_api_key
@@ -2553,18 +2773,18 @@ def list_authenticated_providers(
 
     # --- 4. Saved custom providers from config ---
     # Each ``custom_providers`` entry represents one model under a named
-    # provider. Entries sharing the same endpoint, credential identity, and
-    # wire protocol are grouped into a single picker row, so e.g. four Ollama
+    # provider. Entries sharing the same complete non-model routing identity
+    # are grouped into a single picker row, so e.g. four Ollama
     # entries pointing at ``http://localhost:11434/v1`` with per-model display
     # names ("Ollama — GLM 5.1", "Ollama — Qwen3-coder", ...) appear as one
     # "Ollama" row with four models inside instead of four near-duplicates
     # that differ only by suffix. Same-host entries with different ``key_env``
     # or ``api_mode`` remain distinct providers.
     if custom_providers and isinstance(custom_providers, list):
-        from collections import OrderedDict
+        from collections import Counter, OrderedDict
 
-        # Key by endpoint + credential identity + wire protocol + display
-        # prefix instead of slug: names frequently differ per model
+        # Key by complete non-model routing identity + display prefix instead
+        # of slug: names frequently differ per model
         # ("Ollama — X") while the endpoint stays the same.  Keep same-host
         # providers with distinct env-backed credentials or API protocols
         # separate so picker selection cannot route through the wrong
@@ -2575,6 +2795,16 @@ def list_authenticated_providers(
         # collapsing into one. Per-model suffix entries that share the same
         # prefix ("Ollama — A", "Ollama — B") still group together.
         groups: "OrderedDict[tuple, dict]" = OrderedDict()
+        current_custom_group_key = None
+        legacy_slash_counts = Counter()
+        for entry in custom_providers:
+            if not isinstance(entry, dict):
+                continue
+            raw_name = str(entry.get("name") or "").strip()
+            legacy_prefix = _custom_provider_display_prefix(raw_name, entry)
+            if legacy_prefix != raw_name:
+                legacy_slash_counts[legacy_prefix.casefold()] += 1
+
         for entry in custom_providers:
             if not isinstance(entry, dict):
                 continue
@@ -2593,17 +2823,6 @@ def list_authenticated_providers(
             api_key = inline_api_key or (
                 os.environ.get(key_env, "").strip() if key_env else ""
             )
-            api_mode = str(
-                entry.get("api_mode")
-                or entry.get("transport")
-                or ""
-            ).strip().lower()
-            credential_identity = (
-                inline_api_key
-                if inline_api_key
-                else (f"env:{key_env}" if key_env else "")
-            )
-
             # Read discover_models from the entry (same semantics as
             # section 3: true by default, set false to keep the explicit
             # ``models:`` list instead of replacing it with live /models).
@@ -2618,17 +2837,21 @@ def list_authenticated_providers(
             # with their own headers rather than collapsing into one row and
             # silently adopting whichever header set was seen first.
             entry_extra_headers = _extra_headers_from_config(entry)
-            headers_identity = tuple(sorted(entry_extra_headers.items()))
 
             # Display-name prefix (text before " — " / " - "), used both
             # as a grouping dimension and to derive the row's display name.
-            _display_prefix = raw_name
-            for sep in ("—", " - "):
-                if sep in _display_prefix:
-                    _display_prefix = _display_prefix.split(sep)[0].strip()
-                    break
+            legacy_prefix = _custom_provider_display_prefix(raw_name, entry)
+            _display_prefix = _custom_provider_group_prefix(
+                raw_name,
+                entry,
+                collapse_legacy_slash=(
+                    legacy_slash_counts[legacy_prefix.casefold()] >= 2
+                ),
+            )
 
-            group_key = (api_url, credential_identity, api_mode, headers_identity, _display_prefix.lower())
+            group_key = _custom_provider_picker_group_key(entry, _display_prefix)
+            if custom_provider_slug(raw_name).lower() == _current_provider_norm:
+                current_custom_group_key = group_key
             if group_key not in groups:
                 # Reuse the prefix computed above as the row display name;
                 # fall back to the raw name if stripping left it empty.
@@ -2677,7 +2900,7 @@ def list_authenticated_providers(
             if _current_base_url_norm
             and str(_grp["api_url"]).strip().rstrip("/").lower() == _current_base_url_norm
         )
-        for grp in groups.values():
+        for group_key, grp in groups.items():
             api_url = grp["api_url"]
             api_key = grp.get("api_key", "")
             slug = grp["slug"]
@@ -2744,11 +2967,15 @@ def list_authenticated_providers(
             #   api_key is present. This supports endpoints that expose a
             #   full aggregator catalog via /models but only serve a subset
             #   (parity with section 3's user ``providers:`` behaviour).
-            _grp_is_current = slug.lower() == _current_provider_norm or (
-                _current_provider_norm == "custom"
-                and bool(_current_base_url_norm)
-                and _grp_url_norm == _current_base_url_norm
-                and _current_base_url_group_count == 1
+            _grp_is_current = (
+                slug.lower() == _current_provider_norm
+                or group_key == current_custom_group_key
+                or (
+                    _current_provider_norm == "custom"
+                    and bool(_current_base_url_norm)
+                    and _grp_url_norm == _current_base_url_norm
+                    and _current_base_url_group_count == 1
+                )
             )
             should_probe = (
                 _can_probe_custom_provider(row_is_current=_grp_is_current)

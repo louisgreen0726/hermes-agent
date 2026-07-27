@@ -1663,6 +1663,19 @@ EOF
     chmod +x "$command_link_dir/hermes"
     log_success "Installed hermes launcher → $command_link_display_dir/hermes"
 
+    # Hermes-Louis management center. Route through the same generated entry
+    # point so profile handling, environment sanitization, and the active
+    # editable install stay identical to `hermes manage`.
+    rm -f "$command_link_dir/hermes-manage"
+    cat > "$command_link_dir/hermes-manage" <<EOF
+#!/usr/bin/env bash
+unset PYTHONPATH
+unset PYTHONHOME
+exec "$HERMES_BIN" manage "\$@"
+EOF
+    chmod +x "$command_link_dir/hermes-manage"
+    log_success "Installed Louis manager → $command_link_display_dir/hermes-manage"
+
     if [ -f "$INSTALL_DIR/scripts/hermes-update-louis" ]; then
         rm -f "$command_link_dir/hermes-update-louis"
         ln -s "$INSTALL_DIR/scripts/hermes-update-louis" "$command_link_dir/hermes-update-louis"

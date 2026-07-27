@@ -147,6 +147,201 @@ exec "$HERMES_TEST_REAL_GIT" "$@"
     assert not (Path(env["HERMES_HOME"]) / "louis-releases" / "STATUS").exists()
 
 
+def test_successful_activation_installs_manage_launcher(tmp_path):
+    production, remote, _old_sha, target_sha = _init_release_repo(tmp_path)
+    fake_bin = tmp_path / "bin"
+    command_dir = tmp_path / "commands"
+    editable_marker = tmp_path / "editable-source"
+    hermes_calls = tmp_path / "hermes-calls"
+    test_runs = tmp_path / "test-runs"
+    editable_marker.write_text(f"{production}\n", encoding="utf-8")
+
+    _write_executable(
+        production / "venv" / "bin" / "python",
+        """#!/usr/bin/env bash
+set -euo pipefail
+expected="${@: -1}"
+actual="$(cat "$HERMES_TEST_EDITABLE")"
+if [[ "$(realpath "$actual")" != "$(realpath "$expected")" ]]; then
+  echo "editable source mismatch: $actual != $expected" >&2
+  exit 1
+fi
+printf 'Editable install verified: %s/hermes_cli/main.py\n' "$actual"
+""",
+    )
+    _write_executable(
+        production / "venv" / "bin" / "hermes",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$HERMES_TEST_HERMES_CALLS"
+if [[ "${1:-}" == --version ]]; then
+  printf 'Louis updater test\n'
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "uv",
+        """#!/usr/bin/env bash
+set -euo pipefail
+source_root="${@: -1}"
+source_root="${source_root%\\[all\\]}"
+printf '%s\n' "$source_root" > "$HERMES_TEST_EDITABLE"
+""",
+    )
+    _write_executable(
+        fake_bin / "git",
+        """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+count="${#args[@]}"
+if (( count >= 3 )); then
+  command_index=$((count - 3))
+  if [[ "${args[$command_index]}" == remote \
+     && "${args[$((command_index + 1))]}" == get-url \
+     && "${args[$((command_index + 2))]}" == origin ]]; then
+    exec "$HERMES_TEST_REAL_GIT" "$@"
+  fi
+fi
+exec "$HERMES_TEST_REAL_GIT" \
+  -c "url.${HERMES_TEST_REMOTE_URL}.insteadOf=${HERMES_TEST_LOUIS_ORIGIN}" \
+  "$@"
+""",
+    )
+    _write_executable(
+        fake_bin / "systemctl",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${2:-}" == is-active ]]; then
+  printf 'inactive\n'
+  exit 3
+fi
+echo "unexpected systemctl action: $*" >&2
+exit 64
+""",
+    )
+
+    env = _base_env(tmp_path, production)
+    env.update({
+        "HERMES_COMMAND_LINK_DIR": str(command_dir),
+        "HERMES_TEST_EDITABLE": str(editable_marker),
+        "HERMES_TEST_HERMES_CALLS": str(hermes_calls),
+        "HERMES_TEST_LOUIS_ORIGIN": LOUIS_ORIGIN,
+        "HERMES_TEST_REAL_GIT": GIT,
+        "HERMES_TEST_REMOTE_URL": f"file://{remote}/",
+        "HERMES_TEST_RUNS": str(test_runs),
+        "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        "UV_BIN": str(fake_bin / "uv"),
+    })
+
+    result = subprocess.run(
+        [str(UPDATER), "--worker"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert _git(production, "rev-parse", "HEAD") == target_sha
+    launcher = command_dir / "hermes-manage"
+    assert launcher.is_file()
+    assert launcher.stat().st_mode & stat.S_IXUSR
+
+    launched = subprocess.run(
+        [str(launcher), "--check"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    assert launched.returncode == 0
+    assert hermes_calls.read_text(encoding="utf-8").splitlines()[-1] == "manage --check"
+    assert "Louis manager launcher installed" in output
+
+
+def test_current_release_repairs_missing_manage_launcher(tmp_path):
+    production, remote, _old_sha, target_sha = _init_release_repo(tmp_path)
+    _git(production, "remote", "set-url", "origin", f"file://{remote}")
+    _git(production, "fetch", "origin", "main")
+    _git(production, "reset", "--hard", target_sha)
+    _git(production, "remote", "set-url", "origin", LOUIS_ORIGIN)
+
+    fake_bin = tmp_path / "bin"
+    command_dir = tmp_path / "commands"
+    hermes_calls = tmp_path / "hermes-calls"
+    _write_executable(production / "venv" / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        production / "venv" / "bin" / "hermes",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$HERMES_TEST_HERMES_CALLS"
+""",
+    )
+    _write_executable(
+        fake_bin / "git",
+        """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+count="${#args[@]}"
+if (( count >= 3 )); then
+  command_index=$((count - 3))
+  if [[ "${args[$command_index]}" == remote \
+     && "${args[$((command_index + 1))]}" == get-url \
+     && "${args[$((command_index + 2))]}" == origin ]]; then
+    exec "$HERMES_TEST_REAL_GIT" "$@"
+  fi
+fi
+exec "$HERMES_TEST_REAL_GIT" \
+  -c "url.${HERMES_TEST_REMOTE_URL}.insteadOf=${HERMES_TEST_LOUIS_ORIGIN}" \
+  "$@"
+""",
+    )
+
+    env = _base_env(tmp_path, production)
+    env.update({
+        "HERMES_COMMAND_LINK_DIR": str(command_dir),
+        "HERMES_TEST_HERMES_CALLS": str(hermes_calls),
+        "HERMES_TEST_LOUIS_ORIGIN": LOUIS_ORIGIN,
+        "HERMES_TEST_REAL_GIT": GIT,
+        "HERMES_TEST_REMOTE_URL": f"file://{remote}/",
+        "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+    })
+
+    result = subprocess.run(
+        [str(UPDATER), "--worker"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "Already running the current Louis release." in output
+    launcher = command_dir / "hermes-manage"
+    assert launcher.is_file()
+    assert launcher.stat().st_mode & stat.S_IXUSR
+
+    launched = subprocess.run(
+        [str(launcher), "--check"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    assert launched.returncode == 0
+    assert hermes_calls.read_text(encoding="utf-8").splitlines()[-1] == "manage --check"
+
+
 def test_gateway_activation_failure_restores_previous_release(tmp_path):
     production, remote, old_sha, target_sha = _init_release_repo(tmp_path)
     fake_bin = tmp_path / "bin"
@@ -284,6 +479,7 @@ esac
     assert len(run_lines) == 2
     for run_line in run_lines:
         assert "tests/hermes_cli/test_louis_distribution.py" in run_line
+        assert "tests/hermes_cli/test_louis_manager.py" in run_line
         assert "tests/hermes_cli/test_louis_updater.py" in run_line
         assert "tests/test_packaging_metadata.py" in run_line
 

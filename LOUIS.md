@@ -27,6 +27,29 @@ The first Louis release carries:
 - CJK Rich Message delivery for ordinary replies.
 - Rich table consistency for cron and standalone sends.
 - Regression coverage for Telegram routing, authorization, rich delivery, threads, proxy mode, and delivery ledger behavior.
+- A native management center for models, providers, Gateway services, diagnostics, logs, and protected Louis updates.
+
+## Management center
+
+Use either `hermes manage` or the dedicated `hermes-manage` command. Linux and
+macOS installers create the shortcut explicitly; Windows receives
+`hermes-manage.exe` from the packaged console entry points already placed on
+`PATH` by the installer.
+
+Legacy versions of `hermes_manager.sh` stored every discovered model as a
+separate `custom_providers` entry named `Provider/model-id`. Hermes-Louis can
+inspect and consolidate that layout without exposing credentials:
+
+```bash
+hermes-manage --check
+hermes-manage --repair
+```
+
+Use `--repair --yes` for a non-interactive deployment. Named profiles are
+supported, for example `hermes-manage -p production --check`. A repair is
+written only when endpoint, credential, protocol, TLS, header, and other
+routing settings agree. Hermes-Louis refuses malformed YAML, managed profiles,
+and ambiguous groups, and creates a mode-`0600` backup before any write.
 
 ## Updating
 

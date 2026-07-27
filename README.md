@@ -111,6 +111,7 @@ For more context, see the upstream Astral reports: [astral-sh/uv#13553](https://
 
 ```bash
 hermes              # Interactive CLI — start a conversation
+hermes-manage       # Open the Louis management center
 hermes model        # Choose your LLM provider and model
 hermes tools        # Configure which tools are enabled
 hermes config set   # Set individual config values

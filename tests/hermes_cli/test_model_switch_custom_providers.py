@@ -325,6 +325,154 @@ def test_picker_selection_resolves_named_custom_provider_model_id(monkeypatch):
     assert result.new_model == "deepseek-v4-flash"
 
 
+def test_grouped_legacy_manager_picker_resolves_concrete_provider(monkeypatch):
+    runtime_requests = []
+
+    def fake_runtime_provider(**kwargs):
+        runtime_requests.append(kwargs["requested"])
+        return {
+            "api_key": "test-key",
+            "base_url": "https://louis.example/v1",
+            "api_mode": "codex_responses",
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider",
+        fake_runtime_provider,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.models.validate_requested_model",
+        lambda *args, **kwargs: _MOCK_VALIDATION,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.model_switch.get_model_info", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "hermes_cli.model_switch.get_model_capabilities",
+        lambda *args, **kwargs: None,
+    )
+
+    result = switch_model(
+        raw_input="openai/gpt-5.6-codex",
+        current_provider="custom",
+        current_model="gpt-5.6-sol",
+        current_base_url="https://louis.example/v1",
+        explicit_provider="custom:louis",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Louis/gpt-5.6-sol",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "gpt-5.6-sol",
+            },
+            {
+                "name": "Louis/openai/gpt-5.6-codex",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "openai/gpt-5.6-codex",
+            },
+        ],
+    )
+
+    assert result.success is True
+    assert result.target_provider == "custom:louis/openai/gpt-5.6-codex"
+    assert result.provider_label == "Louis"
+    assert result.new_model == "openai/gpt-5.6-codex"
+    assert result.base_url == "https://louis.example/v1"
+    assert runtime_requests == ["custom:louis/openai/gpt-5.6-codex"]
+
+
+def test_grouped_legacy_manager_picker_refuses_ambiguous_credentials(monkeypatch):
+    runtime_requests = []
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider",
+        lambda **kwargs: runtime_requests.append(kwargs),
+    )
+
+    result = switch_model(
+        raw_input="model-a",
+        current_provider="openrouter",
+        current_model="openai/gpt-5.4",
+        explicit_provider="custom:louis-2",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Louis/model-a",
+                "base_url": "https://louis.example/v1",
+                "api_key": "key-a",
+                "model": "model-a",
+            },
+            {
+                "name": "Louis/model-a",
+                "base_url": "https://louis.example/v1",
+                "api_key": "key-b",
+                "model": "model-a",
+            },
+        ],
+    )
+
+    assert result.success is False
+    assert "Unknown provider" in result.error_message
+    assert runtime_requests == []
+
+
+def test_grouped_legacy_manager_numeric_slug_keeps_credential_group(monkeypatch):
+    runtime_requests = []
+
+    def fake_runtime_provider(**kwargs):
+        runtime_requests.append(kwargs["requested"])
+        return {
+            "api_key": "key-b",
+            "base_url": "https://louis.example/v1",
+            "api_mode": "chat_completions",
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider",
+        fake_runtime_provider,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.models.validate_requested_model",
+        lambda *args, **kwargs: _MOCK_VALIDATION,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.model_switch.get_model_info", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        "hermes_cli.model_switch.get_model_capabilities",
+        lambda *args, **kwargs: None,
+    )
+
+    result = switch_model(
+        raw_input="live-model",
+        current_provider="openrouter",
+        current_model="openai/gpt-5.4",
+        explicit_provider="custom:louis-2",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Louis/model-a",
+                "base_url": "https://louis.example/v1",
+                "api_key": "key-a",
+                "model": "model-a",
+            },
+            {
+                "name": "Louis/model-b",
+                "base_url": "https://louis.example/v1",
+                "api_key": "key-b",
+                "model": "model-b",
+            },
+        ],
+    )
+
+    assert result.success is True
+    assert result.target_provider == "custom:louis/model-b"
+    assert result.provider_label == "Louis"
+    assert result.new_model == "live-model"
+    assert runtime_requests == ["custom:louis/model-b"]
+
+
 def test_list_groups_same_name_custom_providers_into_one_row(monkeypatch):
     """Multiple custom_providers entries sharing a name should produce one row
     with all models collected, not N duplicate rows."""
@@ -1680,6 +1828,161 @@ def test_shared_url_per_model_suffix_still_collapses(monkeypatch):
     )
     assert custom[0]["name"] == "Ollama"
     assert set(custom[0]["models"]) == {"glm-5.1", "qwen3-coder"}
+
+
+def test_legacy_manager_slash_suffix_collapses_into_one_provider(monkeypatch):
+    """hermes_manager.sh wrote ``Provider/model-id`` as the provider name.
+
+    Keep those records usable before the user runs the on-disk repair, while
+    requiring the suffix to match the actual model so unrelated slash names are
+    never grouped accidentally.
+    """
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    providers = list_authenticated_providers(
+        current_provider="custom",
+        current_base_url="https://louis.example/v1",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Louis/gpt-5.6-sol",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "gpt-5.6-sol",
+            },
+            {
+                "name": "Louis/openai/gpt-5.6-codex",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "openai/gpt-5.6-codex",
+            },
+        ],
+        max_models=50,
+        probe_custom_providers=False,
+    )
+
+    custom = [provider for provider in providers if provider.get("is_user_defined")]
+    assert len(custom) == 1
+    assert custom[0]["slug"] == "custom:louis"
+    assert custom[0]["name"] == "Louis"
+    assert set(custom[0]["models"]) == {
+        "gpt-5.6-sol",
+        "openai/gpt-5.6-codex",
+    }
+
+
+def test_legacy_manager_group_marks_concrete_provider_as_current(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    providers = list_authenticated_providers(
+        current_provider="custom:louis/gpt-5.6-sol",
+        current_base_url="https://louis.example/v1",
+        current_model="gpt-5.6-sol",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Louis/gpt-5.6-sol",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "gpt-5.6-sol",
+            },
+            {
+                "name": "Louis/openai/gpt-5.6-codex",
+                "base_url": "https://louis.example/v1",
+                "api_key": "test-key",
+                "model": "openai/gpt-5.6-codex",
+            },
+        ],
+        max_models=50,
+        probe_custom_providers=False,
+    )
+
+    custom = [provider for provider in providers if provider.get("is_user_defined")]
+    assert len(custom) == 1
+    assert custom[0]["slug"] == "custom:louis"
+    assert custom[0]["is_current"] is True
+
+
+def test_legitimate_custom_provider_slash_name_is_not_truncated(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    providers = list_authenticated_providers(
+        current_provider="openrouter",
+        current_base_url="https://openrouter.ai/api/v1",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Org/Production",
+                "base_url": "https://production.example/v1",
+                "api_key": "test-key",
+                "model": "actual-model-id",
+            }
+        ],
+        max_models=50,
+        probe_custom_providers=False,
+    )
+
+    custom = [provider for provider in providers if provider.get("is_user_defined")]
+    assert len(custom) == 1
+    assert custom[0]["slug"] == "custom:org/production"
+    assert custom[0]["name"] == "Org/Production"
+    assert custom[0]["models"] == ["actual-model-id"]
+
+
+def test_single_slash_provider_matching_model_is_not_assumed_legacy(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    providers = list_authenticated_providers(
+        current_provider="openrouter",
+        current_base_url="https://openrouter.ai/api/v1",
+        user_providers={},
+        custom_providers=[
+            {
+                "name": "Org/Production",
+                "base_url": "https://production.example/v1",
+                "api_key": "test-key",
+                "model": "Production",
+            }
+        ],
+        max_models=50,
+        probe_custom_providers=False,
+    )
+
+    custom = [provider for provider in providers if provider.get("is_user_defined")]
+    assert len(custom) == 1
+    assert custom[0]["slug"] == "custom:org/production"
+    assert custom[0]["name"] == "Org/Production"
+    assert custom[0]["models"] == ["Production"]
+
+
+def test_modern_provider_slash_name_is_never_treated_as_legacy(monkeypatch):
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
+
+    providers = list_authenticated_providers(
+        current_provider="openrouter",
+        current_base_url="https://openrouter.ai/api/v1",
+        user_providers={
+            "org-production": {
+                "name": "Org/Production",
+                "base_url": "https://production.example/v1",
+                "api_key": "test-key",
+                "default_model": "Production",
+            }
+        },
+        custom_providers=[],
+        max_models=50,
+        probe_custom_providers=False,
+    )
+
+    custom = [provider for provider in providers if provider.get("is_user_defined")]
+    assert len(custom) == 1
+    assert custom[0]["name"] == "Org/Production"
+    assert custom[0]["models"] == ["Production"]
 
 
 def test_excluded_providers_hides_builtin_row(monkeypatch):
