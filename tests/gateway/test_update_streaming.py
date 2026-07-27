@@ -207,11 +207,11 @@ class TestRestoreStashWithInputFn:
 
 
 class TestUpdateCommandGatewayFlag:
-    """Verify the gateway spawns hermes update --gateway."""
+    """Verify the stock fallback spawns hermes update --gateway."""
 
     @pytest.mark.asyncio
     async def test_spawns_with_gateway_flag(self, tmp_path):
-        """The spawned update command includes --gateway and PYTHONUNBUFFERED."""
+        """The fallback command includes --gateway and streams output."""
         runner = _make_runner()
         event = _make_event()
 
@@ -226,12 +226,11 @@ class TestUpdateCommandGatewayFlag:
 
         mock_popen = MagicMock()
         with patch("gateway.run._hermes_home", hermes_home), \
-             patch("gateway.run.__file__", fake_file), \
+             patch("gateway.slash_commands.__file__", fake_file), \
              patch("shutil.which", side_effect=lambda x: f"/usr/bin/{x}"), \
              patch("subprocess.Popen", mock_popen):
             result = await runner._handle_update_command(event)
 
-        # Check the bash command string contains --gateway and PYTHONUNBUFFERED
         call_args = mock_popen.call_args[0][0]
         cmd_string = call_args[-1] if isinstance(call_args, list) else str(call_args)
         assert "--gateway" in cmd_string

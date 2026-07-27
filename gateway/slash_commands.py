@@ -4908,8 +4908,8 @@ class GatewaySlashCommandsMixin:
     async def _handle_update_command(self, event: MessageEvent) -> str:
         """Handle /update command — update Hermes Agent to the latest version.
 
-        Spawns ``hermes update`` in a detached session (via ``setsid``) so it
-        survives the gateway restart that ``hermes update`` may trigger. Marker
+        Spawns the Louis protected updater in a detached session (via
+        ``setsid``) so it survives the gateway restart. Marker
         files are written so either the current gateway process or the next one
         can notify the user when the update finishes.
         """
@@ -4942,9 +4942,13 @@ class GatewaySlashCommandsMixin:
         if not git_dir.exists():
             return t("gateway.update.not_git_repo")
 
-        hermes_cmd = _resolve_hermes_bin()
+        louis_updater = project_root / "scripts" / "hermes-update-louis"
+        use_louis_updater = louis_updater.is_file() and sys.platform != "win32"
+        hermes_cmd = [str(louis_updater)] if use_louis_updater else _resolve_hermes_bin()
         if not hermes_cmd:
             return t("gateway.update.hermes_cmd_not_found")
+
+        update_args = [] if use_louis_updater else ["update", "--gateway"]
 
         pending_path = _hermes_home / ".update_pending.json"
         output_path = _hermes_home / ".update_output.txt"
@@ -4965,24 +4969,13 @@ class GatewaySlashCommandsMixin:
         _tmp_pending = pending_path.with_suffix(".tmp")
         _tmp_pending.write_text(json.dumps(pending), encoding="utf-8")
         _tmp_pending.replace(pending_path)
+        output_path.unlink(missing_ok=True)
         exit_code_path.unlink(missing_ok=True)
 
-        # Spawn `hermes update --gateway` detached so it survives gateway restart.
-        # --gateway enables file-based IPC for interactive prompts (stash
-        # restore, config migration) so the gateway can forward them to the
-        # user instead of silently skipping them.
-        # Use setsid for portable session detach (works under system services
-        # where systemd-run --user fails due to missing D-Bus session).
-        # PYTHONUNBUFFERED ensures output is flushed line-by-line so the
-        # gateway can stream it to the messenger in near-real-time.
-        # Spawn `hermes update --gateway` detached so it survives gateway restart.
-        # --gateway enables file-based IPC for interactive prompts (stash
-        # restore, config migration) so the gateway can forward them to the
-        # user instead of silently skipping them.
-        # Use setsid for portable session detach (works under system services
-        # where systemd-run --user fails due to missing D-Bus session).
-        # PYTHONUNBUFFERED ensures output is flushed line-by-line so the
-        # gateway can stream it to the messenger in near-real-time.
+        # Louis updates run in a transient user unit. A setsid child is still in
+        # hermes-gateway.service's cgroup and KillMode=mixed would terminate it
+        # when the updater stops the Gateway. The independent unit survives and
+        # publishes progress/exit markers for the watcher after restart.
         #
         # Windows: no bash/setsid chain.  Run `hermes update --gateway`
         # directly via sys.executable; redirect stdout/stderr to the same
@@ -4992,7 +4985,22 @@ class GatewaySlashCommandsMixin:
         # so the simplest correct thing is: launch an inline Python helper
         # that runs the command and writes both outputs.
         try:
-            if sys.platform == "win32":
+            if use_louis_updater and sys.platform != "win32":
+                unit = f"hermes-louis-update-{int(time.time())}-{os.getpid()}"
+                subprocess.run(
+                    [
+                        "systemd-run", "--user", f"--unit={unit}", "--collect",
+                        f"--setenv=HERMES_GATEWAY_UPDATE_OUTPUT={output_path}",
+                        f"--setenv=HERMES_GATEWAY_UPDATE_EXIT_CODE={exit_code_path}",
+                        "--", str(louis_updater), "--worker",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            elif sys.platform == "win32":
                 import textwrap
                 from hermes_cli._subprocess_compat import windows_detach_popen_kwargs
 
@@ -5017,7 +5025,7 @@ class GatewaySlashCommandsMixin:
                     [
                         sys.executable, "-c", helper,
                         str(output_path), str(exit_code_path),
-                        *hermes_cmd, "update", "--gateway",
+                        *hermes_cmd, *update_args,
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -5025,9 +5033,10 @@ class GatewaySlashCommandsMixin:
                 )
             else:
                 hermes_cmd_str = " ".join(shlex.quote(part) for part in hermes_cmd)
+                update_suffix = " ".join(shlex.quote(part) for part in update_args)
                 update_cmd = (
-                    f"PYTHONUNBUFFERED=1 {hermes_cmd_str} update --gateway"
-                    f" > {shlex.quote(str(output_path))} 2>&1; "
+                    f"PYTHONUNBUFFERED=1 {hermes_cmd_str} {update_suffix}".rstrip()
+                    + f" > {shlex.quote(str(output_path))} 2>&1; "
                     # Avoid `status=$?`: `status` is a read-only special parameter
                     # in zsh, and this command string is copied/reused in macOS/zsh
                     # operator wrappers. Keep the template zsh-safe even though this
@@ -5035,22 +5044,17 @@ class GatewaySlashCommandsMixin:
                     f"rc=$?; printf '%s' \"$rc\" > {shlex.quote(str(exit_code_path))}"
                 )
                 setsid_bin = shutil.which("setsid")
-                if setsid_bin:
-                    # Preferred: setsid creates a new session, fully detached
-                    subprocess.Popen(
-                        [setsid_bin, "bash", "-c", update_cmd],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
-                else:
-                    # Fallback: start_new_session=True calls os.setsid() in child
-                    subprocess.Popen(
-                        ["bash", "-c", update_cmd],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True,
-                    )
+                launch_argv = (
+                    [setsid_bin, "bash", "-c", update_cmd]
+                    if setsid_bin
+                    else ["bash", "-c", update_cmd]
+                )
+                subprocess.Popen(
+                    launch_argv,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
         except Exception as e:
             pending_path.unlink(missing_ok=True)
             exit_code_path.unlink(missing_ok=True)

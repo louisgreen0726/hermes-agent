@@ -16,6 +16,13 @@ def _make_run_side_effect(branch="main", verify_ok=True, commit_count="0"):
     def side_effect(cmd, **kwargs):
         joined = " ".join(str(c) for c in cmd)
 
+        if "remote get-url origin" in joined:
+            return subprocess.CompletedProcess(
+                cmd, 0,
+                stdout="https://github.com/louisgreen0726/hermes-agent.git\n",
+                stderr="",
+            )
+
         # git rev-parse --abbrev-ref HEAD  (get current branch)
         if "rev-parse" in joined and "--abbrev-ref" in joined:
             return subprocess.CompletedProcess(cmd, 0, stdout=f"{branch}\n", stderr="")
@@ -419,14 +426,10 @@ class TestCmdUpdateBranchFallback:
 
     @patch("shutil.which", return_value=None)
     @patch("subprocess.run")
-    def test_update_on_fork_checks_upstream_when_origin_up_to_date(
+    def test_update_rejects_non_louis_origin(
         self, mock_run, _mock_which, mock_args, capsys
     ):
-        """Regression for issue #26172: forks whose local HEAD already matches
-        origin/main must still consult upstream/main before printing
-        "Already up to date!" — otherwise a fork that's caught up to its own
-        origin but behind NousResearch/hermes-agent silently misses updates.
-        """
+        """The stock updater fails closed when origin is not the Louis repo."""
         from hermes_cli import main as hm
 
         mock_run.side_effect = _make_run_side_effect(
@@ -437,15 +440,14 @@ class TestCmdUpdateBranchFallback:
             hm,
             "_get_origin_url",
             return_value="https://github.com/example/hermes-agent.git",
-        ), patch.object(hm, "_sync_with_upstream_if_needed") as sync_mock:
-            cmd_update(mock_args)
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_update(mock_args)
 
-        expected_git_cmd = (
-            ["git", "-c", "windows.appendAtomically=false"] if hm._is_windows() else ["git"]
-        )
-        sync_mock.assert_called_once_with(expected_git_cmd, PROJECT_ROOT)
+        assert exc_info.value.code == 1
         captured = capsys.readouterr()
-        assert "Already up to date!" in captured.out
+        assert "Refusing to update from a non-Louis origin" in captured.out
+        assert "louisgreen0726/hermes-agent" in captured.out
 
     @patch("shutil.which")
     @patch("subprocess.run")
@@ -751,6 +753,14 @@ class TestCmdUpdateBranchFlag:
         def side_effect(cmd, **kwargs):
             joined = " ".join(str(c) for c in cmd)
 
+            if "remote get-url origin" in joined:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout="https://github.com/louisgreen0726/hermes-agent.git\n",
+                    stderr="",
+                )
+
             if "rev-parse" in joined and "--abbrev-ref" in joined:
                 return subprocess.CompletedProcess(cmd, 0, stdout=f"{current_branch}\n", stderr="")
 
@@ -905,6 +915,14 @@ class TestCmdUpdateCheckBranchFlag:
         def side_effect(cmd, **kwargs):
             joined = " ".join(str(c) for c in cmd)
 
+            if "remote get-url origin" in joined:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout="https://github.com/louisgreen0726/hermes-agent.git\n",
+                    stderr="",
+                )
+
             if "fetch" in joined and "upstream" in joined:
                 rc = 0 if upstream_fetch_ok else 128
                 err = "" if upstream_fetch_ok else "fatal: 'upstream' does not appear to be a git repository\n"
@@ -980,10 +998,10 @@ class TestCmdUpdateCheckBranchFlag:
 
     @patch("hermes_cli.config.detect_install_method", return_value="git")
     @patch("subprocess.run")
-    def test_check_default_main_still_prefers_upstream(
+    def test_check_default_main_uses_louis_origin_only(
         self, mock_run, _mock_method, capsys
     ):
-        """No --branch (or --branch=None) preserves the upstream-then-origin probe."""
+        """No --branch checks the Louis product origin and ignores upstream."""
         mock_run.side_effect = self._check_side_effect(
             target_branch="main", verify_ok=True, commit_count="0"
         )
@@ -992,11 +1010,10 @@ class TestCmdUpdateCheckBranchFlag:
         cmd_update(args)
 
         commands = [" ".join(str(a) for a in c.args[0]) for c in mock_run.call_args_list]
-        # Should have tried upstream first.
-        assert any("fetch" in c and "upstream" in c for c in commands), commands
-        # Compare ref is upstream/main (upstream fetch succeeded).
+        assert not any("fetch" in c and "upstream" in c for c in commands), commands
+        assert any("fetch origin main" in c for c in commands), commands
         rev_list_cmds = [c for c in commands if "rev-list" in c]
-        assert any("upstream/main" in c for c in rev_list_cmds), rev_list_cmds
+        assert any("origin/main" in c for c in rev_list_cmds), rev_list_cmds
 
 
 class TestCmdUpdateZipBranchRefusal:

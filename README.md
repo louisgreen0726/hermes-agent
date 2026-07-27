@@ -2,9 +2,9 @@
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
 
-# Hermes Agent ☤
+# Louis Hermes Agent ☤
 <p align="center">
-  <a href="https://hermes-agent.nousresearch.com/">Hermes Agent</a> | <a href="https://hermes-agent.nousresearch.com/">Hermes Desktop</a>
+  <a href="LOUIS.md">Louis Distribution</a> | <a href="https://hermes-agent.nousresearch.com/docs/">Upstream Documentation</a>
 </p>
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
@@ -16,7 +16,12 @@
   <a href="README.es.md"><img src="https://img.shields.io/badge/Lang-Español-orange?style=for-the-badge" alt="Español"></a>
 </p>
 
-**The self-improving AI agent built by [Nous Research](https://nousresearch.com).** It's the only agent with a built-in learning loop — it creates skills from experience, improves them during use, nudges itself to persist knowledge, searches its own past conversations, and builds a deepening model of who you are across sessions. Run it on a $5 VPS, a GPU cluster, or serverless infrastructure that costs nearly nothing when idle. It's not tied to your laptop — talk to it from Telegram while it works on a cloud VM.
+> [!IMPORTANT]
+> This repository contains **Louis Hermes Agent**, an independently maintained fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research. It is not an official Nous Research release. Louis releases preserve the upstream license and attribution while adding locally maintained Telegram capabilities and a protected release process. See [LOUIS.md](LOUIS.md) for the distribution policy and carried features.
+
+**Hermes Agent is the self-improving AI agent built by [Nous Research](https://nousresearch.com).** It has a built-in learning loop: it creates skills from experience, improves them during use, searches its own past conversations, and builds a deepening model of who you are across sessions. The Louis distribution keeps that foundation while publishing reviewed releases from this repository.
+
+Automatic updates for this distribution use only `louisgreen0726/hermes-agent` `origin/main`. The Nous Research repository may be retained as a read-only review remote, but is never fetched, merged, rebased, pulled, or synchronized by the Louis update commands.
 
 Use any model you want — [Nous Portal](https://portal.nousresearch.com), OpenRouter, OpenAI, your own endpoint, and [many others](https://hermes-agent.nousresearch.com/docs/integrations/providers). Switch with `hermes model` — no code changes, no lock-in.
 
@@ -37,17 +42,17 @@ Use any model you want — [Nous Portal](https://portal.nousresearch.com), OpenR
 ### Linux, macOS, WSL2, Termux
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.sh | bash
 ```
 
 ### Windows (native, PowerShell)
 
-> **Heads up:** Native Windows runs Hermes without WSL — CLI, gateway, TUI, and tools all work natively. If you'd rather use WSL2, the Linux/macOS one-liner above works there too. Found a bug? Please [file issues](https://github.com/NousResearch/hermes-agent/issues).
+> **Heads up:** Native Windows runs Hermes without WSL — CLI, gateway, TUI, and tools all work natively. If you'd rather use WSL2, the Linux/macOS one-liner above works there too. For Louis distribution bugs, please [file issues here](https://github.com/louisgreen0726/hermes-agent/issues). Upstream-only issues belong in the [Nous Research repository](https://github.com/NousResearch/hermes-agent/issues).
 
 Run this in PowerShell:
 
 ```powershell
-iex (irm https://hermes-agent.nousresearch.com/install.ps1)
+iex (irm https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.ps1)
 ```
 
 The installer handles everything: uv, Python 3.11, Node.js, ripgrep, ffmpeg, **and a portable Git Bash** (MinGit, unpacked to `%LOCALAPPDATA%\hermes\git` — no admin required, completely isolated from any system Git install). Hermes uses this bundled Git Bash to run shell commands.
@@ -224,7 +229,7 @@ full git checkout it creates at `$HERMES_HOME/hermes-agent` (usually
 managed venv, lazy dependencies, gateway, and docs tooling.
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.sh | bash
 cd "${HERMES_HOME:-$HOME/.hermes}/hermes-agent"
 uv pip install -e ".[all,dev]"
 scripts/run_tests.sh
@@ -251,7 +256,8 @@ scripts/run_tests.sh
 
 - 💬 [Discord](https://discord.gg/NousResearch)
 - 📚 [Skills Hub](https://agentskills.io)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
+- 🐛 [Louis Issues](https://github.com/louisgreen0726/hermes-agent/issues)
+- ↗️ [Upstream Hermes Agent](https://github.com/NousResearch/hermes-agent)
 - 🔌 [computer-use-linux](https://github.com/avifenesh/computer-use-linux) — Linux desktop-control MCP server for Hermes and other MCP hosts, with AT-SPI accessibility trees, Wayland/X11 input, screenshots, and compositor window targeting.
 - 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — Community WeChat bridge: Run Hermes Agent and OpenClaw on the same WeChat account.
 
@@ -261,4 +267,4 @@ scripts/run_tests.sh
 
 MIT — see [LICENSE](LICENSE).
 
-Built by [Nous Research](https://nousresearch.com).
+Hermes Agent was built by [Nous Research](https://nousresearch.com). The Louis distribution is independently maintained and is not an official Nous Research release.

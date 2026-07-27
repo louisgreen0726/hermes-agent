@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPO="${HERMES_REPO:-/usr/local/lib/hermes-agent}"
+BRANCH="${HERMES_RELEASE_BRANCH:-main}"
+REMOTE="origin"
+LOG_DIR="${HERMES_HOME:-$HOME/.hermes}/logs"
+BACKUP_DIR="${HERMES_HOME:-$HOME/.hermes}/louis-releases"
+PYTHON="$REPO/venv/bin/python"
+UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+GATEWAY_OUTPUT="${HERMES_GATEWAY_UPDATE_OUTPUT:-}"
+GATEWAY_EXIT_CODE="${HERMES_GATEWAY_UPDATE_EXIT_CODE:-}"
+TEST_PATHS=(
+  tests/gateway/test_telegram_native_guest_mode.py
+  tests/gateway/test_delivery_ledger_producer.py
+  tests/gateway/test_telegram_group_gating.py
+  tests/gateway/test_telegram_rich_messages.py
+  tests/gateway/test_telegram_rich_newlines.py
+  tests/gateway/test_telegram_final_delivery.py
+  tests/gateway/test_telegram_format.py
+  tests/gateway/test_telegram_thread_fallback.py
+  tests/gateway/test_telegram_auth_check.py
+  tests/gateway/test_proxy_mode.py
+  tests/gateway/test_update_command.py
+  tests/gateway/test_update_streaming.py
+  tests/hermes_cli/test_banner_git_state.py
+  tests/hermes_cli/test_cmd_update.py
+  tests/hermes_cli/test_update_check.py
+  tests/tools/test_send_message_tool.py
+  tests/tools/test_send_message_telegram_proxy.py
+  tests/tools/test_telegram_send_message_caption.py
+)
+
+usage() {
+  cat <<'EOF'
+Usage:
+  hermes-update-louis             Queue a protected Louis update in systemd
+  hermes-update-louis --dry-run   Validate origin/main without activation
+  hermes-update-louis --status    Show the latest durable update log
+
+Only origin/main is used as an automatic source. The Nous Research upstream
+remote is never fetched, merged, rebased, pulled, or synchronized by this tool.
+EOF
+}
+
+latest_log() {
+  find "$LOG_DIR" -maxdepth 1 -type f -name 'louis-update-*.log' \
+    -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  --status)
+    log="$(latest_log || true)"
+    [[ -n "$log" ]] || { echo "No Louis update log found."; exit 1; }
+    echo "Latest log: $log"
+    tail -n 100 "$log"
+    exit 0
+    ;;
+esac
+
+if [[ "${1:-}" != "--worker" && "${1:-}" != "--dry-run" ]]; then
+  mkdir -p "$LOG_DIR"
+  unit="hermes-louis-update-$(date +%Y%m%d-%H%M%S)-$$"
+  systemd-run --user --unit="$unit" --collect -- "$SCRIPT_PATH" --worker
+  echo "Louis update queued as $unit.service"
+  echo "Follow it with: journalctl --user -fu $unit.service"
+  echo "Or inspect the durable log with: $SCRIPT_PATH --status"
+  exit 0
+fi
+
+MODE="${1#--}"
+mkdir -p "$LOG_DIR" "$BACKUP_DIR"
+LOCK_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hermes-louis-update.lock"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "ERROR: another Louis update is already running."; exit 9; }
+
+LOG_FILE="$LOG_DIR/louis-update-$(date +%Y%m%d-%H%M%S).log"
+if [[ -n "$GATEWAY_OUTPUT" ]]; then
+  mkdir -p "$(dirname "$GATEWAY_OUTPUT")"
+  exec > >(tee -a "$LOG_FILE" "$GATEWAY_OUTPUT") 2>&1
+else
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
+candidate="local/louis-candidate-$(date +%Y%m%d%H%M%S)-$$"
+worktree="$(mktemp -d /tmp/hermes-louis-update.XXXXXX)"
+old_sha=""
+gateway_was_active=0
+mutated_dependencies=0
+
+cleanup() {
+  rc=$?
+  git -C "$REPO" worktree remove --force "$worktree" >/dev/null 2>&1 || true
+  git -C "$REPO" branch -D "$candidate" >/dev/null 2>&1 || true
+  rm -rf "$worktree"
+  if (( rc != 0 )); then
+    if [[ "$MODE" == worker && "$gateway_was_active" -eq 1 && "$mutated_dependencies" -eq 0 ]]; then
+      systemctl --user start hermes-gateway.service >/dev/null 2>&1 || true
+    fi
+    echo "FAILED (exit $rc). Log: $LOG_FILE"
+  fi
+  if [[ -n "$GATEWAY_EXIT_CODE" ]]; then
+    tmp_exit="$GATEWAY_EXIT_CODE.tmp.$$"
+    printf '%s' "$rc" > "$tmp_exit"
+    mv -f "$tmp_exit" "$GATEWAY_EXIT_CODE"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+printf 'Louis protected update\nMode: %s\nLog: %s\n\n' "$MODE" "$LOG_FILE"
+[[ -d "$REPO/.git" ]] || { echo "ERROR: $REPO is not a Git checkout."; exit 2; }
+[[ -x "$PYTHON" ]] || { echo "ERROR: Hermes Python is missing at $PYTHON."; exit 2; }
+[[ "$(git -C "$REPO" branch --show-current)" == "$BRANCH" ]] || {
+  echo "ERROR: production checkout must be on $BRANCH."; exit 2;
+}
+[[ -z "$(git -C "$REPO" status --porcelain)" ]] || {
+  echo "ERROR: production checkout is dirty."; git -C "$REPO" status --short; exit 2;
+}
+origin_url="$(git -C "$REPO" remote get-url "$REMOTE")"
+[[ "$origin_url" == "https://github.com/louisgreen0726/hermes-agent.git" \
+   || "$origin_url" == "git@github.com:louisgreen0726/hermes-agent.git" ]] || {
+  echo "ERROR: origin is not the Louis product repository: $origin_url"; exit 2;
+}
+
+old_sha="$(git -C "$REPO" rev-parse HEAD)"
+echo "Current production: $old_sha"
+echo "Fetching Louis $REMOTE/$BRANCH..."
+git -C "$REPO" fetch "$REMOTE" "$BRANCH"
+target_sha="$(git -C "$REPO" rev-parse "$REMOTE/$BRANCH")"
+echo "Candidate target:   $target_sha"
+
+if [[ "$old_sha" == "$target_sha" && "$MODE" != dry-run ]]; then
+  echo "Already running the current Louis release."
+  exit 0
+fi
+if ! git -C "$REPO" merge-base --is-ancestor "$old_sha" "$target_sha"; then
+  echo "ERROR: origin/$BRANCH is not a fast-forward from production."
+  echo "Publish a linear release or perform a reviewed manual migration."
+  exit 3
+fi
+
+git -C "$REPO" worktree add -b "$candidate" "$worktree" "$target_sha"
+ln -s "$REPO/venv" "$worktree/venv"
+
+echo "Running Louis regression suite against candidate source..."
+(cd "$worktree" && scripts/run_tests.sh "${TEST_PATHS[@]}" -q)
+if [[ "$MODE" == dry-run ]]; then
+  echo "DRY RUN COMPLETE: production, dependencies, and gateway were not changed."
+  exit 0
+fi
+
+if [[ "$(git -C "$REPO" rev-parse HEAD)" != "$old_sha" \
+   || "$(git -C "$REPO" branch --show-current)" != "$BRANCH" \
+   || -n "$(git -C "$REPO" status --porcelain)" \
+   || "$(git -C "$REPO" rev-parse "$REMOTE/$BRANCH")" != "$target_sha" ]]; then
+  echo "ERROR: repository changed during validation; refusing activation."
+  exit 7
+fi
+
+if [[ "$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)" == active ]]; then
+  gateway_was_active=1
+  echo "Stopping Gateway while dependencies and checkout are activated..."
+  systemctl --user stop hermes-gateway.service
+fi
+
+mutated_dependencies=1
+echo "Installing candidate dependencies into the shared Hermes environment..."
+if [[ -x "$UV_BIN" ]]; then
+  "$UV_BIN" pip install --python "$PYTHON" -e "$worktree[all]"
+else
+  "$PYTHON" -m pip install -e "$worktree[all]"
+fi
+
+echo "Re-running Louis regression suite with activated dependencies..."
+(cd "$worktree" && scripts/run_tests.sh "${TEST_PATHS[@]}" -q)
+
+if [[ "$(git -C "$REPO" rev-parse HEAD)" != "$old_sha" \
+   || -n "$(git -C "$REPO" status --porcelain)" \
+   || "$(git -C "$REPO" rev-parse "$REMOTE/$BRANCH")" != "$target_sha" ]]; then
+  echo "ERROR: repository changed during post-install validation. Gateway remains stopped."
+  exit 7
+fi
+
+echo "Activating validated Louis release..."
+git -C "$REPO" merge --ff-only "$target_sha"
+
+if [[ -x "$UV_BIN" ]]; then
+  "$UV_BIN" pip install --python "$PYTHON" --no-deps -e "$REPO"
+else
+  "$PYTHON" -m pip install --no-deps -e "$REPO"
+fi
+
+(cd /root && "$PYTHON" - <<PY
+from pathlib import Path
+import hermes_cli.main
+actual = Path(hermes_cli.main.__file__).resolve()
+expected = Path("$REPO").resolve()
+if expected not in actual.parents:
+    raise SystemExit(f"editable install points outside production: {actual}")
+print(f"Editable install verified: {actual}")
+PY
+)
+[[ -z "$(git -C "$REPO" status --porcelain)" ]] || {
+  echo "ERROR: activation dirtied production. Gateway remains stopped."; exit 8;
+}
+
+stamp="$(date +%Y%m%d-%H%M%S)"
+bundle="$BACKUP_DIR/louis-$stamp.bundle"
+git -C "$REPO" bundle create "$bundle" "$BRANCH" "$REMOTE/$BRANCH"
+git -C "$REPO" bundle verify "$bundle"
+sha256sum "$bundle" > "$bundle.sha256"
+printf 'updated_at=%s\nprevious_commit=%s\ntarget_commit=%s\nlog=%s\n' \
+  "$(date -Is)" "$old_sha" "$target_sha" "$LOG_FILE" > "$BACKUP_DIR/STATUS"
+
+if [[ "$gateway_was_active" -eq 1 ]]; then
+  echo "Starting Gateway from the validated Louis release..."
+  systemctl --user start hermes-gateway.service
+  for _ in $(seq 1 60); do
+    state="$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)"
+    pid="$(systemctl --user show hermes-gateway.service -p MainPID --value 2>/dev/null || true)"
+    [[ "$state" == active && -n "$pid" && "$pid" != 0 ]] && break
+    sleep 2
+  done
+  [[ "$(systemctl --user is-active hermes-gateway.service)" == active ]] || {
+    echo "ERROR: Gateway failed to start."; exit 5;
+  }
+  stable_pid="$(systemctl --user show hermes-gateway.service -p MainPID --value)"
+  sleep 10
+  [[ "$(systemctl --user is-active hermes-gateway.service)" == active \
+     && "$(systemctl --user show hermes-gateway.service -p MainPID --value)" == "$stable_pid" ]] || {
+    echo "ERROR: Gateway failed the stability window."; exit 5;
+  }
+  echo "Gateway stable with PID $stable_pid."
+fi
+
+mutated_dependencies=0
+echo "SUCCESS"
+echo "Release: $(git -C "$REPO" rev-parse --short HEAD)"
+echo "Version: $("$REPO/venv/bin/hermes" --version | head -n 1)"
+echo "Log: $LOG_FILE"

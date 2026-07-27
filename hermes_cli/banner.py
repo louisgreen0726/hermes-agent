@@ -120,8 +120,7 @@ _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600
 # (e.g. nix-built hermes — no local git history to count against).
 UPDATE_AVAILABLE_NO_COUNT = -1
 
-_UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
-_OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
+_RELEASE_REPO_URL = "https://github.com/louisgreen0726/hermes-agent.git"
 
 
 def _canonical_github_remote(url: str | None) -> str:
@@ -150,8 +149,8 @@ def _is_ssh_remote(url: str | None) -> bool:
     return value.startswith("git@") or value.startswith("ssh://")
 
 
-def _is_official_ssh_remote(url: str | None) -> bool:
-    return _is_ssh_remote(url) and _canonical_github_remote(url) == _OFFICIAL_REPO_CANONICAL
+def _is_release_ssh_remote(url: str | None) -> bool:
+    return _is_ssh_remote(url) and _canonical_github_remote(url) == "github.com/louisgreen0726/hermes-agent"
 
 
 def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str]:
@@ -176,14 +175,14 @@ def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str
 
 
 def _check_via_rev(local_rev: str) -> Optional[int]:
-    """Compare an embedded git revision to upstream main via ls-remote.
+    """Compare an embedded git revision to the Louis release main branch.
 
     Returns 0 if up-to-date, ``UPDATE_AVAILABLE_NO_COUNT`` if behind,
     or ``None`` on failure.
     """
     try:
         result = subprocess.run(
-            ["git", "ls-remote", _UPSTREAM_REPO_URL, "refs/heads/main"],
+            ["git", "ls-remote", _RELEASE_REPO_URL, "refs/heads/main"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=10,
         )
@@ -191,16 +190,16 @@ def _check_via_rev(local_rev: str) -> Optional[int]:
         return None
     if result.returncode != 0 or not result.stdout:
         return None
-    upstream_rev = result.stdout.split()[0]
-    if not upstream_rev:
+    release_rev = result.stdout.split()[0]
+    if not release_rev:
         return None
-    return 0 if upstream_rev == local_rev else UPDATE_AVAILABLE_NO_COUNT
+    return 0 if release_rev == local_rev else UPDATE_AVAILABLE_NO_COUNT
 
 
 def _check_via_local_git(repo_dir: Path) -> Optional[int]:
     """Count commits behind origin/main in a local checkout."""
     origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
-    if _is_official_ssh_remote(origin_url):
+    if _is_release_ssh_remote(origin_url):
         head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
         checked = _check_via_rev(head_rev) if head_rev else None
         if checked == UPDATE_AVAILABLE_NO_COUNT:
@@ -422,7 +421,7 @@ def get_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
     return {"upstream": upstream, "local": local, "ahead": max(ahead, 0)}
 
 
-_RELEASE_URL_BASE = "https://github.com/NousResearch/hermes-agent/releases/tag"
+_RELEASE_URL_BASE = "https://github.com/louisgreen0726/hermes-agent/releases/tag"
 _latest_release_cache: Optional[tuple] = None  # (tag, url) once resolved
 
 
@@ -430,8 +429,8 @@ def get_latest_release_tag(repo_dir: Optional[Path] = None) -> Optional[tuple]:
     """Return ``(tag, release_url)`` for the latest git tag, or None.
 
     Local-only — runs ``git describe --tags --abbrev=0`` against the
-    Hermes checkout. Cached per-process. Release URL always points at the
-    canonical NousResearch/hermes-agent repo (forks don't get a link).
+    Hermes checkout. Cached per-process. Louis builds link to the product
+    fork's release page.
     """
     global _latest_release_cache
     if _latest_release_cache is not None:
