@@ -85,7 +85,9 @@ model:
   #   Applies on the OpenAI wire only (not native Anthropic / Bedrock).
   #
   # default_headers:
-  #   User-Agent: "curl/8.7.1"
+  #   User-Agent: "Hermes-Agent/{hermes_version}"
+  #   The {hermes_version} placeholder resolves to the running Hermes release
+  #   (for example, Louis-0.19.0.3) without rewriting config.yaml on updates.
   #
   # extra_headers: accepted as an alias of default_headers (merged, with
   #   extra_headers winning when both are set) — matches the per-provider

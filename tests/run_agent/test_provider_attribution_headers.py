@@ -232,6 +232,35 @@ def test_user_default_headers_override_sdk_user_agent(mock_openai):
 
 
 @patch("run_agent.OpenAI")
+def test_user_default_headers_render_running_release_in_user_agent(mock_openai):
+    from hermes_cli import __version__
+
+    mock_openai.return_value = MagicMock()
+    agent = AIAgent(
+        api_key="test-key",
+        base_url="http://localhost:8080/v1",
+        model="my-custom-model",
+        provider="custom",
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+    )
+
+    with patch("hermes_cli.config.load_config", return_value={
+        "model": {
+            "default_headers": {
+                "User-Agent": "Hermes-Agent/{hermes_version}",
+            },
+        },
+    }):
+        agent._apply_client_headers_for_base_url("http://localhost:8080/v1")
+
+    assert agent._client_kwargs["default_headers"]["User-Agent"] == (
+        f"Hermes-Agent/{__version__}"
+    )
+
+
+@patch("run_agent.OpenAI")
 def test_user_default_headers_win_over_provider_defaults(mock_openai):
     """User headers take precedence but leave untouched provider defaults intact."""
     mock_openai.return_value = MagicMock()

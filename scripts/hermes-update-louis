@@ -11,37 +11,8 @@ UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 GATEWAY_OUTPUT="${HERMES_GATEWAY_UPDATE_OUTPUT:-}"
 GATEWAY_EXIT_CODE="${HERMES_GATEWAY_UPDATE_EXIT_CODE:-}"
-TEST_PATHS=(
-  tests/cli/test_cli_provider_resolution.py
-  tests/gateway/test_telegram_native_guest_mode.py
-  tests/gateway/test_delivery_ledger_producer.py
-  tests/gateway/test_telegram_group_gating.py
-  tests/gateway/test_telegram_rich_messages.py
-  tests/gateway/test_telegram_rich_newlines.py
-  tests/gateway/test_telegram_final_delivery.py
-  tests/gateway/test_telegram_format.py
-  tests/gateway/test_telegram_thread_fallback.py
-  tests/gateway/test_telegram_auth_check.py
-  tests/gateway/test_proxy_mode.py
-  tests/gateway/test_update_command.py
-  tests/gateway/test_update_streaming.py
-  tests/hermes_cli/test_banner_git_state.py
-  tests/hermes_cli/test_cmd_update.py
-  tests/hermes_cli/test_custom_provider_model_switch.py
-  tests/hermes_cli/test_louis_distribution.py
-  tests/hermes_cli/test_louis_manager.py
-  tests/hermes_cli/test_louis_updater.py
-  tests/hermes_cli/test_managed_installs.py
-  tests/hermes_cli/test_model_catalog.py
-  tests/hermes_cli/test_model_provider_persistence.py
-  tests/hermes_cli/test_runtime_provider_resolution.py
-  tests/hermes_cli/test_update_check.py
-  tests/test_project_metadata.py
-  tests/test_packaging_metadata.py
-  tests/tools/test_send_message_tool.py
-  tests/tools/test_send_message_telegram_proxy.py
-  tests/tools/test_telegram_send_message_caption.py
-)
+TEST_MANIFEST="scripts/louis-release-tests.txt"
+TEST_PATHS=()
 
 usage() {
   cat <<'EOF'
@@ -102,6 +73,7 @@ mutated_dependencies=0
 activation_started=0
 activation_completed=0
 backup_bundle=""
+runtime_version=""
 
 install_source_dependencies() {
   source_root="$1"
@@ -112,20 +84,79 @@ install_source_dependencies() {
   fi
 }
 
+load_candidate_test_paths() {
+  local candidate_root="$1"
+  local manifest="$candidate_root/$TEST_MANIFEST"
+  local entry resolved line_number=0
+  local -A seen=()
+
+  [[ -f "$manifest" ]] || {
+    echo "ERROR: candidate release test manifest is missing: $TEST_MANIFEST"
+    return 1
+  }
+
+  TEST_PATHS=()
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    ((line_number += 1))
+    if [[ -z "$entry" || "$entry" =~ [[:space:]] \
+       || "$entry" != tests/* || "$entry" == *//* || "$entry" == *\\* \
+       || "$entry" =~ (^|/)\.\.?(/|$) ]]; then
+      echo "ERROR: invalid release test path at $TEST_MANIFEST:$line_number: $entry"
+      return 1
+    fi
+    if [[ -n "${seen[$entry]:-}" ]]; then
+      echo "ERROR: duplicate release test path at $TEST_MANIFEST:$line_number: $entry"
+      return 1
+    fi
+    if ! resolved="$(realpath -e -- "$candidate_root/$entry" 2>/dev/null)" \
+       || [[ "$resolved" != "$candidate_root"/tests/* || ! -f "$resolved" ]]; then
+      echo "ERROR: release test path is missing or leaves the candidate worktree: $entry"
+      return 1
+    fi
+    seen["$entry"]=1
+    TEST_PATHS+=("$entry")
+  done < "$manifest"
+
+  [[ "${#TEST_PATHS[@]}" -gt 0 ]] || {
+    echo "ERROR: candidate release test manifest is empty: $TEST_MANIFEST"
+    return 1
+  }
+  echo "Loaded ${#TEST_PATHS[@]} release test paths from candidate $TEST_MANIFEST."
+}
+
 verify_editable_source() {
   expected_root="$1"
   (cd / && "$PYTHON" - "$expected_root" <<'PY'
 from pathlib import Path
 import sys
+import gateway.run
 import hermes_cli.main
 
 actual = Path(hermes_cli.main.__file__).resolve()
+gateway_actual = Path(gateway.run.__file__).resolve()
 expected = Path(sys.argv[1]).resolve()
 if expected not in actual.parents:
     raise SystemExit(f"editable install points outside expected source: {actual}")
+if expected not in gateway_actual.parents:
+    raise SystemExit(f"gateway import points outside expected source: {gateway_actual}")
 print(f"Editable install verified: {actual}")
+print(f"Gateway import verified: {gateway_actual}")
 PY
   )
+}
+
+verify_runtime_smoke() {
+  local expected_root="$1"
+  local version_output
+
+  verify_editable_source "$expected_root"
+  version_output="$("$expected_root/venv/bin/hermes" --version)"
+  [[ "$version_output" == *Louis-* ]] || {
+    echo "ERROR: Hermes version smoke check did not report a Louis release: $version_output"
+    return 1
+  }
+  runtime_version="${version_output%%$'\n'*}"
+  echo "Runtime smoke check passed: $runtime_version"
 }
 
 install_manage_launcher() {
@@ -221,6 +252,7 @@ echo "Candidate target:   $target_sha"
 
 if [[ "$old_sha" == "$target_sha" && "$MODE" != dry-run ]]; then
   echo "Already running the current Louis release."
+  verify_runtime_smoke "$REPO"
   install_manage_launcher
   exit 0
 fi
@@ -232,6 +264,7 @@ fi
 
 git -C "$REPO" worktree add -b "$candidate" "$worktree" "$target_sha"
 ln -s "$REPO/venv" "$worktree/venv"
+load_candidate_test_paths "$worktree" || exit 4
 
 echo "Running Louis regression suite against candidate source..."
 (cd "$worktree" && scripts/run_tests.sh "${TEST_PATHS[@]}" -q)
@@ -284,7 +317,8 @@ if [[ -x "$UV_BIN" ]]; then
 else
   "$PYTHON" -m pip install --no-deps -e "$REPO"
 fi
-verify_editable_source "$REPO"
+echo "Running non-network runtime smoke checks..."
+verify_runtime_smoke "$REPO"
 [[ -z "$(git -C "$REPO" status --porcelain)" ]] || {
   echo "ERROR: activation dirtied production. Gateway remains stopped."; exit 8;
 }
@@ -317,6 +351,6 @@ mutated_dependencies=0
 install_manage_launcher
 echo "SUCCESS"
 echo "Release: $(git -C "$REPO" rev-parse --short HEAD)"
-echo "Version: $("$REPO/venv/bin/hermes" --version | head -n 1)"
+echo "Version: $runtime_version"
 echo "Previous release backup: $backup_bundle"
 echo "Log: $LOG_FILE"

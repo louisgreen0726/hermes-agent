@@ -5597,6 +5597,23 @@ def normalize_extra_headers(extra_headers: Any) -> Dict[str, str]:
     return {str(k): str(v) for k, v in extra_headers.items() if v is not None}
 
 
+def render_versioned_headers(extra_headers: Any) -> Dict[str, str]:
+    """Resolve the Hermes release placeholder in configured User-Agent values.
+
+    ``{hermes_version}`` is intentionally supported only for ``User-Agent``.
+    Other headers may contain credentials or provider-specific template syntax
+    and must remain byte-for-byte under user control.
+    """
+    headers = normalize_extra_headers(extra_headers)
+    for key, value in headers.items():
+        if key.lower() != "user-agent" or "{hermes_version}" not in value:
+            continue
+        from hermes_cli import __version__
+
+        headers[key] = value.replace("{hermes_version}", __version__)
+    return headers
+
+
 def get_custom_provider_extra_headers(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
@@ -5627,7 +5644,7 @@ def get_custom_provider_extra_headers(
         entry_url = normalize_route_base_url(entry.get("base_url"))
         if not entry_url or entry_url != target_url:
             continue
-        return normalize_extra_headers(entry.get("extra_headers"))
+        return render_versioned_headers(entry.get("extra_headers"))
     return {}
 
 

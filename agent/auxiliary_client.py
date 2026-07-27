@@ -635,7 +635,7 @@ def _apply_user_default_headers(headers: dict | None) -> dict | None:
     when nothing is configured. No allocation when there are no overrides.
     """
     try:
-        from hermes_cli.config import cfg_get, load_config
+        from hermes_cli.config import cfg_get, load_config, render_versioned_headers
         _cfg = load_config()
         user_headers = cfg_get(_cfg, "model", "default_headers")
         # ``model.extra_headers`` is an accepted alias (matches the
@@ -654,10 +654,10 @@ def _apply_user_default_headers(headers: dict | None) -> dict | None:
     if not isinstance(user_headers, dict) or not user_headers:
         return headers
     merged = dict(headers or {})
-    for key, value in user_headers.items():
+    for key, value in render_versioned_headers(user_headers).items():
         if value is None:
             continue
-        merged[str(key)] = str(value)
+        merged[key] = value
     return merged or headers
 
 

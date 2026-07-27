@@ -11,6 +11,7 @@ from hermes_cli.config import (
     apply_custom_provider_extra_headers_to_client_kwargs,
     get_custom_provider_extra_headers,
     normalize_extra_headers,
+    render_versioned_headers,
 )
 from hermes_cli import models as models_mod
 
@@ -25,6 +26,20 @@ def test_normalize_extra_headers_stringifies_and_drops_none():
 def test_normalize_extra_headers_rejects_non_dict_and_empty():
     for bad in (None, "x", 42, ["a"], {}):
         assert normalize_extra_headers(bad) == {}
+
+
+def test_render_versioned_headers_expands_only_user_agent():
+    from hermes_cli import __version__
+
+    rendered = render_versioned_headers({
+        "User-Agent": "Hermes-Agent/{hermes_version}",
+        "X-Template": "keep-{hermes_version}",
+    })
+
+    assert rendered == {
+        "User-Agent": f"Hermes-Agent/{__version__}",
+        "X-Template": "keep-{hermes_version}",
+    }
 
 
 def test_normalize_entry_keeps_extra_headers():
@@ -81,6 +96,20 @@ def test_get_custom_provider_extra_headers_matches_base_url():
         custom_providers=providers,
     )
     assert headers == {"CF-Access-Client-Id": "xxxx.access"}
+
+
+def test_get_custom_provider_extra_headers_renders_versioned_user_agent():
+    from hermes_cli import __version__
+
+    headers = get_custom_provider_extra_headers(
+        "https://llm.internal.example.com/v1",
+        custom_providers=[{
+            "base_url": "https://llm.internal.example.com/v1",
+            "extra_headers": {"User-Agent": "Hermes-Agent/{hermes_version}"},
+        }],
+    )
+
+    assert headers == {"User-Agent": f"Hermes-Agent/{__version__}"}
 
 
 def test_get_custom_provider_extra_headers_no_match_returns_empty():

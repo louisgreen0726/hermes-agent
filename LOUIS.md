@@ -6,15 +6,15 @@ This repository is the production source for the Louis distribution of Hermes Ag
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.19.0.2`
-- Python package version: `0.19.0+Louis.2`
+- User-facing version: `Louis-0.19.0.3`
+- Python package version: `0.19.0+Louis.3`
 - Upstream project: `https://github.com/NousResearch/hermes-agent`
 
 The project is based on Hermes Agent by Nous Research and remains distributed under the MIT License. It is an independently maintained fork and is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.19.0.2`.
+- The versioned baseline is `Louis-0.19.0.3`.
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -31,7 +31,7 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.19.0.2 baseline carries:
+The versioned 0.19.0.3 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
@@ -47,6 +47,10 @@ The versioned 0.19.0.2 baseline carries:
   environments.
 - Named custom-provider activation that preserves the provider-owned Responses,
   Chat Completions, or Anthropic transport at runtime.
+- Candidate-owned protected-update test gates, strict manifest validation, and
+  non-network runtime smoke checks before a release is accepted as healthy.
+- Version-aware custom `User-Agent` headers and synchronized Python, CLI, and
+  Desktop release metadata.
 
 ## Management center
 
@@ -88,7 +92,13 @@ and ambiguous groups, and creates a mode-`0600` backup before any write.
 
 ## Updating
 
-Production machines use `hermes-update-louis`. The updater validates `origin/main` in an isolated worktree, runs the Louis regression suite, updates dependencies, verifies the candidate again, activates the validated commit, and restarts the gateway only after integrity checks pass.
+Production machines use `hermes-update-louis`. The updater validates `origin/main` in an isolated worktree, loads the regression manifest from that candidate, runs the suite, updates dependencies, verifies the candidate again, activates the validated commit, and restarts the gateway only after integrity checks pass. Candidate manifest entries are restricted to existing test files inside the candidate worktree.
+
+Before a newly activated release is accepted, the updater verifies the editable
+source, imports both the CLI and Gateway runtime, and checks the Louis version
+command without making a model API request. The same smoke check runs when the
+checkout is already current, so a broken editable install is not reported as
+healthy merely because no Git update is available.
 
 The gateway launches updates in an independent transient user service so the updater survives the intentional Gateway stop/restart window. Progress and the final exit code are delivered through durable marker files.
 
@@ -98,5 +108,6 @@ Do not use `git pull upstream main` on a production checkout.
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.19.0.3](docs/releases/LOUIS_0.19.0.3.md)
 - [Louis Hermes Agent 0.19.0.2](docs/releases/LOUIS_0.19.0.2.md)
 - [Louis Hermes Agent 0.19.0.1 baseline](docs/releases/LOUIS_0.19.0.1.md)

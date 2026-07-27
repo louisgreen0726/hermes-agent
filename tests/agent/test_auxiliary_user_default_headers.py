@@ -69,6 +69,25 @@ class TestApplyUserDefaultHeadersHelper:
         assert merged == {"User-Agent": "curl/8.7.1"}
         assert "X-Drop" not in merged
 
+    def test_user_agent_version_placeholder_tracks_running_release(self, tmp_path):
+        from hermes_cli import __version__
+
+        _write_config(tmp_path, {
+            "model": {
+                "default": "m",
+                "default_headers": {
+                    "User-Agent": "Hermes-Agent/{hermes_version}",
+                    "X-Keep": "literal-{hermes_version}",
+                },
+            },
+        })
+        from agent.auxiliary_client import _apply_user_default_headers
+
+        merged = _apply_user_default_headers(None)
+
+        assert merged["User-Agent"] == f"Hermes-Agent/{__version__}"
+        assert merged["X-Keep"] == "literal-{hermes_version}"
+
 
 class TestAuxClientHonorsUserDefaultHeaders:
     """Integration: resolve_provider_client must pass overridden headers to OpenAI."""

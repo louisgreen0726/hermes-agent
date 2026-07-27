@@ -8,9 +8,12 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 UPDATER = ROOT / "scripts" / "hermes-update-louis"
+RELEASE_TEST_MANIFEST = ROOT / "scripts" / "louis-release-tests.txt"
 LOUIS_ORIGIN = "https://github.com/louisgreen0726/hermes-agent.git"
 UPSTREAM_ORIGIN = "https://github.com/NousResearch/hermes-agent.git"
 GIT = shutil.which("git")
@@ -60,6 +63,16 @@ def _init_release_repo(tmp_path: Path) -> tuple[Path, Path, str, str]:
     _git(seed, "config", "user.email", "louis-updater-test@example.invalid")
     (seed / ".gitignore").write_text("venv/\n", encoding="utf-8")
     (seed / "release.txt").write_text("old\n", encoding="utf-8")
+    (seed / "tests").mkdir()
+    (seed / "tests" / "old_gate.py").write_text("# old gate\n", encoding="utf-8")
+    (seed / "scripts").mkdir()
+    (seed / "scripts" / "louis-release-tests.txt").write_text(
+        "tests/old_gate.py\n", encoding="utf-8"
+    )
+    _write_executable(
+        seed / "scripts" / "hermes-update-louis",
+        UPDATER.read_text(encoding="utf-8"),
+    )
     _write_executable(
         seed / "scripts" / "run_tests.sh",
         """#!/usr/bin/env bash
@@ -92,11 +105,26 @@ printf '%s\n' "$*" >> "$HERMES_TEST_RUNS"
     assert _git(production, "rev-parse", "--is-shallow-repository") == "true"
 
     (seed / "release.txt").write_text("candidate\n", encoding="utf-8")
-    _git(seed, "add", "release.txt")
+    (seed / "tests" / "candidate_gate.py").write_text(
+        "# candidate gate\n", encoding="utf-8"
+    )
+    (seed / "scripts" / "louis-release-tests.txt").write_text(
+        "tests/candidate_gate.py\n", encoding="utf-8"
+    )
+    _git(seed, "add", "release.txt", "scripts/louis-release-tests.txt", "tests")
     _git(seed, "commit", "-m", "candidate release")
     target_sha = _git(seed, "rev-parse", "HEAD")
     _git(seed, "push", "origin", "main")
     return production, remote, old_sha, target_sha
+
+
+def test_release_test_manifest_contains_unique_existing_test_paths():
+    entries = RELEASE_TEST_MANIFEST.read_text(encoding="utf-8").splitlines()
+
+    assert entries
+    assert len(entries) == len(set(entries))
+    assert all(entry.startswith("tests/") for entry in entries)
+    assert all((ROOT / entry).is_file() for entry in entries)
 
 
 def test_rejects_non_louis_origin_before_fetch(tmp_path):
@@ -147,7 +175,79 @@ exec "$HERMES_TEST_REAL_GIT" "$@"
     assert not (Path(env["HERMES_HOME"]) / "louis-releases" / "STATUS").exists()
 
 
-def test_successful_activation_installs_manage_launcher(tmp_path):
+@pytest.mark.parametrize(
+    ("manifest_value", "expected_error"),
+    [
+        (None, "candidate release test manifest is missing"),
+        ("/tmp/outside.py\n", "invalid release test path"),
+        ("tests/../release.txt\n", "invalid release test path"),
+        ("tests/missing.py\n", "missing or leaves the candidate worktree"),
+        (
+            "tests/candidate_gate.py\ntests/candidate_gate.py\n",
+            "duplicate release test path",
+        ),
+    ],
+)
+def test_rejects_invalid_candidate_test_manifest(
+    tmp_path, manifest_value, expected_error
+):
+    production, remote, _old_sha, _target_sha = _init_release_repo(tmp_path)
+    seed = tmp_path / "seed"
+    manifest = seed / "scripts" / "louis-release-tests.txt"
+    if manifest_value is None:
+        manifest.unlink()
+        _git(seed, "rm", "scripts/louis-release-tests.txt")
+    else:
+        manifest.write_text(manifest_value, encoding="utf-8")
+        _git(seed, "add", "scripts/louis-release-tests.txt")
+    _git(seed, "commit", "-m", "invalid candidate manifest")
+    _git(seed, "push", "origin", "main")
+
+    _write_executable(production / "venv" / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "git",
+        """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+count="${#args[@]}"
+if (( count >= 3 )); then
+  command_index=$((count - 3))
+  if [[ "${args[$command_index]}" == remote \
+     && "${args[$((command_index + 1))]}" == get-url \
+     && "${args[$((command_index + 2))]}" == origin ]]; then
+    exec "$HERMES_TEST_REAL_GIT" "$@"
+  fi
+fi
+exec "$HERMES_TEST_REAL_GIT" \
+  -c "url.${HERMES_TEST_REMOTE_URL}.insteadOf=${HERMES_TEST_LOUIS_ORIGIN}" \
+  "$@"
+""",
+    )
+    env = _base_env(tmp_path, production)
+    env.update({
+        "HERMES_TEST_LOUIS_ORIGIN": LOUIS_ORIGIN,
+        "HERMES_TEST_REAL_GIT": GIT,
+        "HERMES_TEST_REMOTE_URL": f"file://{remote}/",
+        "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+    })
+
+    result = subprocess.run(
+        [str(production / "scripts" / "hermes-update-louis"), "--dry-run"],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 4, output
+    assert expected_error in output
+
+
+def test_old_updater_uses_candidate_manifest_and_installs_manage_launcher(tmp_path):
     production, remote, _old_sha, target_sha = _init_release_repo(tmp_path)
     fake_bin = tmp_path / "bin"
     command_dir = tmp_path / "commands"
@@ -175,7 +275,7 @@ printf 'Editable install verified: %s/hermes_cli/main.py\n' "$actual"
 set -euo pipefail
 printf '%s\n' "$*" >> "$HERMES_TEST_HERMES_CALLS"
 if [[ "${1:-}" == --version ]]; then
-  printf 'Louis updater test\n'
+  printf 'Hermes Agent vLouis-updater-test\n'
 fi
 """,
     )
@@ -234,7 +334,7 @@ exit 64
     })
 
     result = subprocess.run(
-        [str(UPDATER), "--worker"],
+        [str(production / "scripts" / "hermes-update-louis"), "--worker"],
         env=env,
         capture_output=True,
         text=True,
@@ -249,6 +349,10 @@ exit 64
     launcher = command_dir / "hermes-manage"
     assert launcher.is_file()
     assert launcher.stat().st_mode & stat.S_IXUSR
+    assert test_runs.read_text(encoding="utf-8").splitlines() == [
+        "tests/candidate_gate.py -q",
+        "tests/candidate_gate.py -q",
+    ]
 
     launched = subprocess.run(
         [str(launcher), "--check"],
@@ -273,13 +377,23 @@ def test_current_release_repairs_missing_manage_launcher(tmp_path):
 
     fake_bin = tmp_path / "bin"
     command_dir = tmp_path / "commands"
+    editable_checks = tmp_path / "editable-checks"
     hermes_calls = tmp_path / "hermes-calls"
-    _write_executable(production / "venv" / "bin" / "python", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        production / "venv" / "bin" / "python",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "${@: -1}" >> "$HERMES_TEST_EDITABLE_CHECKS"
+""",
+    )
     _write_executable(
         production / "venv" / "bin" / "hermes",
         """#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$HERMES_TEST_HERMES_CALLS"
+if [[ "${1:-}" == --version ]]; then
+  printf 'Hermes Agent vLouis-updater-test\n'
+fi
 """,
     )
     _write_executable(
@@ -305,6 +419,7 @@ exec "$HERMES_TEST_REAL_GIT" \
     env = _base_env(tmp_path, production)
     env.update({
         "HERMES_COMMAND_LINK_DIR": str(command_dir),
+        "HERMES_TEST_EDITABLE_CHECKS": str(editable_checks),
         "HERMES_TEST_HERMES_CALLS": str(hermes_calls),
         "HERMES_TEST_LOUIS_ORIGIN": LOUIS_ORIGIN,
         "HERMES_TEST_REAL_GIT": GIT,
@@ -325,6 +440,8 @@ exec "$HERMES_TEST_REAL_GIT" \
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "Already running the current Louis release." in output
+    assert "Runtime smoke check passed" in output
+    assert editable_checks.read_text(encoding="utf-8").strip() == str(production)
     launcher = command_dir / "hermes-manage"
     assert launcher.is_file()
     assert launcher.stat().st_mode & stat.S_IXUSR
@@ -367,7 +484,7 @@ printf 'Editable install verified: %s/hermes_cli/main.py\n' "$actual"
     )
     _write_executable(
         production / "venv" / "bin" / "hermes",
-        "#!/bin/sh\nprintf 'Louis updater test\n'\n",
+        "#!/bin/sh\nprintf 'Hermes Agent vLouis-updater-test\n'\n",
     )
     _write_executable(
         fake_bin / "uv",
@@ -476,12 +593,10 @@ esac
     assert "FAILED (exit 55)." in output
 
     run_lines = test_runs.read_text(encoding="utf-8").splitlines()
-    assert len(run_lines) == 2
-    for run_line in run_lines:
-        assert "tests/hermes_cli/test_louis_distribution.py" in run_line
-        assert "tests/hermes_cli/test_louis_manager.py" in run_line
-        assert "tests/hermes_cli/test_louis_updater.py" in run_line
-        assert "tests/test_packaging_metadata.py" in run_line
+    assert run_lines == [
+        "tests/candidate_gate.py -q",
+        "tests/candidate_gate.py -q",
+    ]
 
     release_dir = Path(env["HERMES_HOME"]) / "louis-releases"
     assert not (release_dir / "STATUS").exists()
