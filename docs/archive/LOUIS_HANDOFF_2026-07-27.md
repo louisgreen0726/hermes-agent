@@ -1,5 +1,13 @@
 # Louis Hermes Agent WIP Handoff
 
+> [!WARNING]
+> This is an archived work-in-progress snapshot. Its checkpoint, test status,
+> blockers, and deployment warnings no longer describe the current repository.
+> Use [LOUIS.md](../../LOUIS.md) and the
+> [release-notes index](../../LOUIS_RELEASE_NOTES.md) for current information.
+> The still-unconfirmed cache-rate investigation was extracted to
+> [the investigation plan](../plans/2026-07-27-louis-cache-hit-rate-investigation.md).
+
 Date: 2026-07-27
 Repository: `https://github.com/louisgreen0726/hermes-agent`
 Branch: `main`

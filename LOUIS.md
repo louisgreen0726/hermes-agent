@@ -12,22 +12,42 @@ This repository is the production source for the Louis distribution of Hermes Ag
 
 The project is based on Hermes Agent by Nous Research and remains distributed under the MIT License. It is an independently maintained fork and is not an official Nous Research release.
 
+## Current channel
+
+- The versioned baseline remains `Louis-0.19.0.1`.
+- `main` is the production update channel and may contain validated unreleased
+  changes after that baseline.
+- Pending changes and immutable versioned records are separated in the
+  [release-notes index](LOUIS_RELEASE_NOTES.md).
+- The protected update and Gateway restart workflow has been exercised on the
+  production installation. This document intentionally does not pin a
+  deployment SHA, which would become stale after the next update.
+
 ## Release policy
 
 `origin/main` is the only automatic update source. The `upstream` remote may be retained for manual review, but ordinary `hermes update`, `hermes-update-louis`, and the gateway `/update` command never merge, rebase, pull, or synchronize from it.
 
 Upstream changes are adopted only through an explicit integration branch, code review, and the Louis regression suite. They are then committed to this repository as a new Louis release.
 
-## Local capabilities
+## Capabilities
 
-The first Louis release carries:
+The versioned 0.19.0.1 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
 - CJK Rich Message delivery for ordinary replies.
 - Rich table consistency for cron and standalone sends.
 - Regression coverage for Telegram routing, authorization, rich delivery, threads, proxy mode, and delivery ledger behavior.
-- A native management center for models, providers, Gateway services, diagnostics, logs, and protected Louis updates.
+
+Current `main` additionally carries:
+
+- A native management center for models, providers, Gateway services,
+  diagnostics, logs, and protected Louis updates.
+- Safe migration away from the legacy one-provider-per-model layout.
+- Correct provider grouping and routing in `/model` for multi-model custom
+  endpoints.
+- Stable systemd service generation across operator-shell and Gateway runtime
+  environments.
 
 ## Management center
 
@@ -35,6 +55,22 @@ Use either `hermes manage` or the dedicated `hermes-manage` command. Linux and
 macOS installers create the shortcut explicitly; Windows receives
 `hermes-manage.exe` from the packaged console entry points already placed on
 `PATH` by the installer.
+
+To add a custom endpoint interactively:
+
+1. Run `hermes manage` and choose **Model and provider management**.
+2. Choose **Custom endpoint (enter URL manually)**.
+3. Enter the API base URL, API key, compatibility mode, exact model ID,
+   optional context length, and a provider display name.
+4. Restart the Gateway when the running messaging service must pick up the new
+   default configuration.
+
+Store one provider per endpoint. A model ID such as `gpt-5.6-sol` must remain a
+model ID; do not turn it into a provider name such as `Louis/gpt-5.6-sol`.
+When an endpoint exposes multiple models, select the saved provider again or
+refresh the model catalog instead of creating another provider record. API
+keys entered by this flow are stored in `.env`, while `config.yaml` retains an
+environment reference.
 
 Legacy versions of `hermes_manager.sh` stored every discovered model as a
 separate `custom_providers` entry named `Provider/model-id`. Hermes-Louis can
@@ -61,4 +97,6 @@ Do not use `git pull upstream main` on a production checkout.
 
 ## Release notes
 
-- [Louis Hermes Agent 0.19.0.1](LOUIS_RELEASE_NOTES.md)
+- [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
+- [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.19.0.1 baseline](docs/releases/LOUIS_0.19.0.1.md)
