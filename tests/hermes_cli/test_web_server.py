@@ -8331,15 +8331,36 @@ class TestThemeBootstrapCSS:
         # No baked literal values in the html,body rule.
         assert "#0a1628" not in css.split("html,body")[1]
 
-    def test_builtin_theme_renders_nothing(self, tmp_path, monkeypatch):
+    def test_every_builtin_theme_renders_first_paint_variables(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         from hermes_cli import web_server
-        for builtin in ("default", "midnight", "cyberpunk"):
+        for builtin in web_server._BUILTIN_DASHBOARD_THEMES:
+            name = builtin["name"]
             monkeypatch.setattr(
                 web_server, "load_config",
-                lambda b=builtin: {"dashboard": {"theme": b}},
+                lambda b=name: {"dashboard": {"theme": b}},
             )
-            assert web_server._render_active_theme_bootstrap_css() == ""
+            css = web_server._render_active_theme_bootstrap_css()
+            assert '<style id="hermes-theme-bootstrap">' in css
+            assert "--background-base:" in css
+            assert "--theme-base-size:" in css
+
+    def test_light_large_builtin_renders_locked_semantic_colors(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        from hermes_cli import web_server
+
+        monkeypatch.setattr(
+            web_server,
+            "load_config",
+            lambda: {"dashboard": {"theme": "hermes-light-large"}},
+        )
+        css = web_server._render_active_theme_bootstrap_css()
+        assert "--background-base:#FFFFFF;" in css
+        assert "--midground-base:#171A1A;" in css
+        assert "--theme-base-size:18px;" in css
+        assert "--theme-spacing-mul:1.2;" in css
+        assert "--text-secondary:#4B5654;" in css
+        assert "--color-primary:#0F766E;" in css
 
     def test_unknown_theme_renders_nothing(self, tmp_path, monkeypatch):
         """Configured theme has no YAML on disk → empty string, no crash."""
@@ -8434,7 +8455,7 @@ class TestThemeBootstrapCSS:
         head = resp.text.split("</head>")[0]
         assert "hermes-theme-bootstrap" in head
 
-    def test_serve_index_no_bootstrap_for_builtin_theme(self, tmp_path, monkeypatch):
+    def test_serve_index_bootstraps_builtin_theme(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         import hermes_cli.web_server as ws
         monkeypatch.setattr(
@@ -8443,7 +8464,8 @@ class TestThemeBootstrapCSS:
         client = self._mount_spa_client(tmp_path, monkeypatch)
         resp = client.get("/chat")
         assert resp.status_code == 200
-        assert "hermes-theme-bootstrap" not in resp.text
+        assert "hermes-theme-bootstrap" in resp.text
+        assert "--background-base:#041c1c;" in resp.text
 
     def test_serve_index_survives_render_failure(self, tmp_path, monkeypatch):
         """Even if theme rendering blows up internally, index serving

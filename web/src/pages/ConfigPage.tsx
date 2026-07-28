@@ -51,6 +51,11 @@ import { Badge } from "@nous-research/ui/ui/components/badge";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
+import {
+  getConfigFieldDisplay,
+  getConfigSectionLabel,
+} from "@/lib/config-field-i18n";
+import { formatMessage, formatNumber } from "@/lib/locale-format";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -122,7 +127,7 @@ export default function ConfigPage() {
   const [confirmReset, setConfirmReset] = useState(false);
   const { toast, showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { setEnd } = usePageHeader();
 
   useLayoutEffect(() => {
@@ -158,7 +163,7 @@ export default function ConfigPage() {
   function prettyCategoryName(cat: string): string {
     const key = cat as keyof typeof t.config.categories;
     if (t.config.categories[key]) return t.config.categories[key];
-    return cat.charAt(0).toUpperCase() + cat.slice(1);
+    return getConfigSectionLabel(cat, locale);
   }
 
   useEffect(() => {
@@ -254,9 +259,15 @@ export default function ConfigPage() {
     return Object.entries(schema).filter(([key, s]) => {
       const label = key.split(".").pop() ?? key;
       const humanLabel = label.replace(/_/g, " ");
+      const display = getConfigFieldDisplay(key, s, locale);
       return (
         key.toLowerCase().includes(lowerSearch) ||
         humanLabel.toLowerCase().includes(lowerSearch) ||
+        display.label.toLowerCase().includes(lowerSearch) ||
+        display.description.toLowerCase().includes(lowerSearch) ||
+        Object.values(display.optionLabels).some((option) =>
+          option.toLowerCase().includes(lowerSearch),
+        ) ||
         String(s.category ?? "")
           .toLowerCase()
           .includes(lowerSearch) ||
@@ -265,7 +276,7 @@ export default function ConfigPage() {
           .includes(lowerSearch)
       );
     });
-  }, [isSearching, lowerSearch, schema]);
+  }, [isSearching, locale, lowerSearch, schema]);
 
   /* ---- Active tab fields ---- */
   const activeFields = useMemo(() => {
@@ -394,6 +405,7 @@ export default function ConfigPage() {
         section !== activeCategory;
       lastSection = section;
       lastCat = cat;
+      const display = getConfigFieldDisplay(key, s, locale);
 
       return (
         <div key={key}>
@@ -403,7 +415,7 @@ export default function ConfigPage() {
                 category={cat}
                 className="h-4 w-4 text-muted-foreground"
               />
-              <span className="font-mondwest text-display text-xs font-semibold tracking-wider text-muted-foreground">
+              <span className="font-mondwest text-display text-xs font-semibold tracking-normal text-muted-foreground">
                 {prettyCategoryName(cat)}
               </span>
               <div className="flex-1 border-t border-border" />
@@ -411,8 +423,8 @@ export default function ConfigPage() {
           )}
           {showSection && (
             <div className="flex items-center gap-2 pt-4 pb-2 first:pt-0">
-              <span className="font-mondwest text-display text-xs font-semibold tracking-wider text-muted-foreground">
-                {section.replace(/_/g, " ")}
+              <span className="font-mondwest text-display text-xs font-semibold tracking-normal text-muted-foreground">
+                {getConfigSectionLabel(section, locale)}
               </span>
               <div className="flex-1 border-t border-border" />
             </div>
@@ -421,6 +433,9 @@ export default function ConfigPage() {
             <AutoField
               schemaKey={key}
               schema={s}
+              displayLabel={display.label}
+              displayDescription={display.description}
+              optionLabels={display.optionLabels}
               value={getNestedValue(config, key)}
               onChange={(v) => setConfig(setNestedValue(config, key, v))}
             />
@@ -553,12 +568,12 @@ export default function ConfigPage() {
               <div className="flex flex-col border border-border bg-muted/20">
                 <div className="hidden sm:flex items-center gap-2 px-3 py-2 border-b border-border">
                   <Filter className="h-3 w-3 text-text-tertiary" />
-                  <span className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary">
+                  <span className="font-mondwest text-display text-xs tracking-normal text-text-secondary">
                     {t.config.filters}
                   </span>
                 </div>
 
-                <div className="hidden sm:block px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
+                <div className="hidden sm:block px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-normal text-text-tertiary">
                   {t.config.sections}
                 </div>
 
@@ -590,7 +605,7 @@ export default function ConfigPage() {
                               : "text-text-tertiary"
                           }`}
                         >
-                          {categoryCounts[cat] || 0}
+                          {formatNumber(categoryCounts[cat] || 0, locale)}
                         </span>
                       </ListItem>
                     );
@@ -610,7 +625,7 @@ export default function ConfigPage() {
                       {t.config.searchResults}
                     </CardTitle>
                     <Badge tone="secondary" className="text-xs">
-                      {searchMatchedFields.length}{" "}
+                      {formatNumber(searchMatchedFields.length, locale)}{" "}
                       {t.config.fields.replace(
                         "{s}",
                         searchMatchedFields.length !== 1 ? "s" : "",
@@ -641,7 +656,7 @@ export default function ConfigPage() {
                       {prettyCategoryName(activeCategory)}
                     </CardTitle>
                     <Badge tone="secondary" className="text-xs">
-                      {activeFields.length}{" "}
+                      {formatNumber(activeFields.length, locale)}{" "}
                       {t.config.fields.replace(
                         "{s}",
                         activeFields.length !== 1 ? "s" : "",
@@ -668,9 +683,12 @@ export default function ConfigPage() {
             ? t.config.searchResults
             : prettyCategoryName(activeCategory),
         )}
-        description={`This will reset ${
-          (isSearching ? searchMatchedFields : activeFields).length
-        } field(s) to their default values.`}
+        description={formatMessage(t.config.resetDescription, {
+          count: formatNumber(
+            (isSearching ? searchMatchedFields : activeFields).length,
+            locale,
+          ),
+        })}
         destructive
         confirmLabel={t.config.resetDefaults}
       />

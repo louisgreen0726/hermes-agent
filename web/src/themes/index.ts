@@ -1,5 +1,10 @@
 export { ThemeProvider, useTheme } from "./context";
-export { BUILTIN_THEMES, defaultTheme } from "./presets";
+export {
+  BUILTIN_THEMES,
+  DEFAULT_THEME_NAME,
+  defaultTheme,
+  hermesLightLargeTheme,
+} from "./presets";
 export {
   FONT_CHOICES,
   THEME_DEFAULT_FONT_ID,

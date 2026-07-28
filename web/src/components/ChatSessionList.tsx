@@ -28,6 +28,7 @@ import { useSearchParams } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { api, type SessionInfo } from "@/lib/api";
 import { cn, timeAgo } from "@/lib/utils";
+import { formatNumber } from "@/lib/locale-format";
 
 const SESSION_LIMIT = 30;
 interface ChatSessionListProps {
@@ -62,7 +63,7 @@ export function ChatSessionList({
   onPicked,
   onNewChat,
 }: ChatSessionListProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,12 +93,12 @@ export function ChatSessionList({
       })
       .catch((e: Error) => {
         if (reqRef.current !== myReq) return;
-        setError(e.message || "failed to load sessions");
+        setError(e.message || t.sessions.failedToLoad);
       })
       .finally(() => {
         if (reqRef.current === myReq) setLoading(false);
       });
-  }, [scopeKey]);
+  }, [scopeKey, t.sessions.failedToLoad]);
 
   useEffect(() => {
     // Dashboard data surfaces fetch from an effect on mount + scope change;
@@ -191,18 +192,20 @@ export function ChatSessionList({
                 "normal-case tracking-normal",
                 isActive
                   ? "bg-primary/10 text-foreground border-l-2 border-primary"
-                  : "text-text-secondary hover:bg-midground/5 hover:text-foreground",
+                  : "text-text-secondary hover:bg-accent hover:text-primary",
               )}
             >
               <span className="w-full truncate text-sm font-medium">
                 {rowLabel(s, t.sessions.untitledSession)}
               </span>
               <span className="flex w-full items-center gap-1.5 text-[0.6875rem] text-text-tertiary">
-                <span>{timeAgo(s.last_active)}</span>
+                <span>{timeAgo(s.last_active, locale)}</span>
                 {s.message_count > 0 && (
                   <>
                     <span aria-hidden>·</span>
-                    <span>{s.message_count} msgs</span>
+                    <span>
+                      {formatNumber(s.message_count, locale)} {t.common.msgs}
+                    </span>
                   </>
                 )}
                 {s.source && s.source !== "cli" && (
@@ -217,7 +220,7 @@ export function ChatSessionList({
         })}
       </div>
     );
-  }, [activeSessionId, error, loading, pick, reload, sessions, t]);
+  }, [activeSessionId, error, loading, locale, pick, reload, sessions, t]);
 
   return (
     <aside
@@ -227,7 +230,7 @@ export function ChatSessionList({
       )}
     >
       <div className="flex items-center justify-between gap-2 px-2 pb-2">
-        <span className="text-display text-xs tracking-wider text-text-tertiary">
+        <span className="text-display text-xs tracking-normal text-text-tertiary">
           {t.sessions.title}
         </span>
         <Button

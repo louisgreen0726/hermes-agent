@@ -7,7 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { BUILTIN_THEMES, defaultTheme } from "./presets";
+import {
+  BUILTIN_THEMES,
+  DEFAULT_THEME_NAME,
+  hermesLightLargeTheme,
+} from "./presets";
 import {
   FONT_CHOICES,
   THEME_DEFAULT_FONT_ID,
@@ -113,6 +117,11 @@ function layoutVars(layout: ThemeLayout): Record<string, string> {
 
 /** Map a color-overrides key (camelCase) to its `--color-*` CSS var. */
 const OVERRIDE_KEY_TO_VAR: Record<keyof ThemeColorOverrides, string> = {
+  textPrimary: "--text-primary",
+  textSecondary: "--text-secondary",
+  textTertiary: "--text-tertiary",
+  textDisabled: "--text-disabled",
+  textOnAccent: "--text-on-accent",
   card: "--color-card",
   cardForeground: "--color-card-foreground",
   popover: "--color-popover",
@@ -411,8 +420,8 @@ function applyTheme(theme: DashboardTheme) {
 export function ThemeProvider({ children }: { children: ReactNode }) {
   /** Name of the currently active theme (built-in id or user YAML name). */
   const [themeName, setThemeName] = useState<string>(() => {
-    if (typeof window === "undefined") return "default";
-    const stored = window.localStorage.getItem(STORAGE_KEY) ?? "default";
+    if (typeof window === "undefined") return DEFAULT_THEME_NAME;
+    const stored = window.localStorage.getItem(STORAGE_KEY) ?? DEFAULT_THEME_NAME;
     const migrated = migrateThemeName(stored);
     // Write the migrated name back so future reads converge on the new
     // key and we eventually retire the alias entry.
@@ -455,7 +464,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return (
         BUILTIN_THEMES[name] ??
         userThemeDefs[name] ??
-        defaultTheme
+        hermesLightLargeTheme
       );
     },
     [userThemeDefs],
@@ -548,7 +557,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         ...availableThemes.map((t) => t.name),
         ...Object.keys(userThemeDefs),
       ]);
-      const next = knownNames.has(name) ? name : "default";
+      const next = knownNames.has(name) ? name : DEFAULT_THEME_NAME;
       setThemeName(next);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(STORAGE_KEY, next);
@@ -588,8 +597,8 @@ export function useTheme(): ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: defaultTheme,
-  themeName: "default",
+  theme: hermesLightLargeTheme,
+  themeName: DEFAULT_THEME_NAME,
   availableThemes: Object.values(BUILTIN_THEMES).map((t) => ({
     name: t.name,
     label: t.label,

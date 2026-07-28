@@ -38,6 +38,7 @@ import { Label } from "@nous-research/ui/ui/components/label";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
+import { formatMessage } from "@/lib/locale-format";
 
 /* ------------------------------------------------------------------ */
 /*  Provider grouping                                                  */
@@ -260,7 +261,11 @@ function EnvVarRow({
               size="icon"
               onClick={() => onReveal(varKey)}
               title={isRevealed ? t.env.hideValue : t.env.showValue}
-              aria-label={isRevealed ? `Hide ${varKey}` : `Reveal ${varKey}`}
+              aria-label={
+                isRevealed
+                  ? `${t.env.hideValue}: ${varKey}`
+                  : `${t.env.showValue}: ${varKey}`
+              }
             >
               {isRevealed ? <EyeOff /> : <Eye />}
             </Button>
@@ -394,7 +399,7 @@ function ProviderGroupCard({
           ) : (
             <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           )}
-          <span className="font-semibold text-sm tracking-wide">
+          <span className="font-semibold text-sm tracking-normal">
             {group.name === "Other" ? t.common.other : group.name}
           </span>
           {hasAnyConfigured && (
@@ -565,7 +570,7 @@ function CustomKeysCard({
 
         {/* Add-key form */}
         <div className="grid gap-2 border border-dashed border-border p-4">
-          <Label className="text-xs font-semibold tracking-wide">
+          <Label className="text-xs font-semibold tracking-normal">
             {t.env.addCustomKey}
           </Label>
           <div className="flex items-start gap-2">
@@ -627,14 +632,14 @@ export default function EnvPage() {
   const sections = useMemo(() => {
     const items: { id: string; label: string }[] = [
       { id: "section-oauth", label: "OAuth" },
-      { id: "section-providers", label: "Providers" },
+      { id: "section-providers", label: t.env.providersSection },
     ];
     if (vars) {
       const categories = ["tool", "messaging", "setting"];
       const CATEGORY_LABELS: Record<string, string> = {
-        tool: "Tools",
-        messaging: t.common.gateway ?? "Gateway",
-        setting: "Settings",
+        tool: t.env.toolsSection,
+        messaging: t.common.gateway,
+        setting: t.env.settingsSection,
       };
       for (const cat of categories) {
         const hasEntries = Object.values(vars).some(
@@ -661,14 +666,14 @@ export default function EnvPage() {
     setAfterTitle(
       <nav
         className="flex shrink-0 flex-nowrap items-center gap-1"
-        aria-label="Jump to section"
+        aria-label={t.env.jumpToSection}
       >
         {sections.map((s) => (
           <button
             key={s.id}
             type="button"
             onClick={() => scrollTo(s.id)}
-            className="shrink-0 cursor-pointer px-2 py-0.5 font-mondwest text-display text-xs tracking-wider text-text-secondary hover:text-foreground border border-border/50 hover:border-foreground/30 transition-colors"
+            className="shrink-0 cursor-pointer px-2 py-0.5 font-mondwest text-display text-xs tracking-normal text-text-secondary hover:text-foreground border border-border/50 hover:border-foreground/30 transition-colors"
           >
             {s.label}
           </button>
@@ -678,7 +683,7 @@ export default function EnvPage() {
     return () => {
       setAfterTitle(null);
     };
-  }, [vars, sections, setAfterTitle]);
+  }, [vars, sections, setAfterTitle, t.env.jumpToSection]);
 
   const handleSave = async (key: string) => {
     const value = edits[key];
@@ -708,9 +713,12 @@ export default function EnvPage() {
         delete n[key];
         return n;
       });
-      showToast(`${key} ${t.common.save.toLowerCase()}d`, "success");
+      showToast(formatMessage(t.env.keySaved, { key }), "success");
     } catch (e) {
-      showToast(`${t.config.failedToSave} ${key}: ${e}`, "error");
+      showToast(
+        formatMessage(t.env.keySaveFailed, { key, error: String(e) }),
+        "error",
+      );
     } finally {
       setSaving(null);
     }
@@ -740,15 +748,18 @@ export default function EnvPage() {
             delete n[key];
             return n;
           });
-          showToast(`${key} ${t.common.removed}`, "success");
+          showToast(formatMessage(t.env.keyRemoved, { key }), "success");
         } catch (e) {
-          showToast(`${t.common.failedToRemove} ${key}: ${e}`, "error");
+          showToast(
+            formatMessage(t.env.keyRemoveFailed, { key, error: String(e) }),
+            "error",
+          );
           throw e;
         } finally {
           setSaving(null);
         }
       },
-      [showToast, t.common.removed, t.common.failedToRemove],
+      [showToast, t.env.keyRemoved, t.env.keyRemoveFailed],
     ),
   });
 
@@ -765,7 +776,7 @@ export default function EnvPage() {
       const resp = await api.revealEnvVar(key);
       setRevealed((prev) => ({ ...prev, [key]: resp.value }));
     } catch {
-      showToast(`${t.common.failedToReveal} ${key}`, "error");
+      showToast(formatMessage(t.env.keyRevealFailed, { key }), "error");
     }
   };
 
@@ -840,7 +851,7 @@ export default function EnvPage() {
     // settings and relabelled accordingly.
     const CATEGORY_META_LABELS: Record<string, string> = {
       tool: t.app.nav.keys,
-      messaging: t.common.gateway ?? "Gateway",
+      messaging: t.common.gateway,
       setting: t.app.nav.config,
     };
     const CATEGORY_META_HINTS: Record<string, string | undefined> = {
@@ -1078,7 +1089,7 @@ function EnvCategoryCard({
               type="button"
               onClick={() => setShowAll((open) => !open)}
               aria-expanded={showAll}
-              className="shrink-0 cursor-pointer border-0 bg-transparent p-0 font-mondwest text-xs tracking-[0.08em] text-text-secondary transition-colors hover:text-foreground"
+              className="shrink-0 cursor-pointer border-0 bg-transparent p-0 font-mondwest text-xs tracking-normal text-text-secondary transition-colors hover:text-foreground"
             >
               {showAll ? t.env.showLess : t.env.showMore}
             </button>

@@ -21,6 +21,8 @@ import { Badge } from "@nous-research/ui/ui/components/badge";
 import { ConfirmDialog } from "@nous-research/ui/ui/components/confirm-dialog";
 import { OAuthLoginModal } from "@/components/OAuthLoginModal";
 import { useI18n } from "@/i18n";
+import type { Locale } from "@/i18n/types";
+import { formatMessage, formatNumber } from "@/lib/locale-format";
 
 interface Props {
   onError?: (msg: string) => void;
@@ -30,6 +32,8 @@ interface Props {
 function formatExpiresAt(
   expiresAt: string | null | undefined,
   expiresInTemplate: string,
+  locale: Locale,
+  units: { minute: string; hour: string; day: string },
 ): string | null {
   if (!expiresAt) return null;
   try {
@@ -37,13 +41,24 @@ function formatExpiresAt(
     if (Number.isNaN(dt.getTime())) return null;
     const now = Date.now();
     const diff = dt.getTime() - now;
-    if (diff < 0) return "expired";
+    if (diff < 0) return "__expired__";
     const mins = Math.floor(diff / 60_000);
-    if (mins < 60) return expiresInTemplate.replace("{time}", `${mins}m`);
+    if (mins < 60)
+      return expiresInTemplate.replace(
+        "{time}",
+        `${formatNumber(mins, locale)}${units.minute}`,
+      );
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return expiresInTemplate.replace("{time}", `${hours}h`);
+    if (hours < 24)
+      return expiresInTemplate.replace(
+        "{time}",
+        `${formatNumber(hours, locale)}${units.hour}`,
+      );
     const days = Math.floor(hours / 24);
-    return expiresInTemplate.replace("{time}", `${days}d`);
+    return expiresInTemplate.replace(
+      "{time}",
+      `${formatNumber(days, locale)}${units.day}`,
+    );
   } catch {
     return null;
   }
@@ -56,7 +71,7 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
   const [loginFor, setLoginFor] = useState<OAuthProvider | null>(null);
   const [disconnectTarget, setDisconnectTarget] =
     useState<OAuthProvider | null>(null);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
@@ -66,9 +81,15 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
     api
       .getOAuthProviders()
       .then((resp) => setProviders(resp.providers))
-      .catch((e) => onErrorRef.current?.(`Failed to load providers: ${e}`))
+      .catch((e) =>
+        onErrorRef.current?.(
+          formatMessage(t.components.oauthProviders.loadFailed, {
+            error: String(e),
+          }),
+        ),
+      )
       .finally(() => setLoading(false));
-  }, []);
+  }, [t.components.oauthProviders.loadFailed]);
 
   useEffect(() => {
     refresh();
@@ -79,10 +100,18 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
     setDisconnectTarget(null);
     try {
       await api.disconnectOAuthProvider(provider.id);
-      onSuccess?.(`${provider.name} ${t.oauth.disconnect.toLowerCase()}ed`);
+      onSuccess?.(
+        formatMessage(t.components.oauthProviders.disconnected, {
+          provider: provider.name,
+        }),
+      );
       refresh();
     } catch (e) {
-      onError?.(`${t.oauth.disconnect} failed: ${e}`);
+      onError?.(
+        formatMessage(t.components.oauthProviders.disconnectFailed, {
+          error: String(e),
+        }),
+      );
     } finally {
       setBusyId(null);
     }
@@ -115,8 +144,8 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
         </div>
         <CardDescription>
           {t.oauth.description
-            .replace("{connected}", String(connectedCount))
-            .replace("{total}", String(totalCount))}
+            .replace("{connected}", formatNumber(connectedCount, locale))
+            .replace("{total}", formatNumber(totalCount, locale))}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -135,6 +164,12 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
             const expiresLabel = formatExpiresAt(
               p.status.expires_at,
               t.oauth.expiresIn,
+              locale,
+              {
+                minute: t.oauth.minuteUnit,
+                hour: t.oauth.hourUnit,
+                day: t.oauth.dayUnit,
+              },
             );
             const isBusy = busyId === p.id;
             return (
@@ -153,7 +188,7 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                       <span className="font-medium text-sm">{p.name}</span>
                       <Badge
                         tone="outline"
-                        className="text-xs tracking-wide"
+                        className="text-xs tracking-normal"
                       >
                         {t.oauth.flowLabels[p.flow]}
                       </Badge>
@@ -162,12 +197,12 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                           {t.oauth.connected}
                         </Badge>
                       )}
-                      {expiresLabel === "expired" && (
+                      {expiresLabel === "__expired__" && (
                         <Badge tone="destructive" className="text-xs">
                           {t.oauth.expired}
                         </Badge>
                       )}
-                      {expiresLabel && expiresLabel !== "expired" && (
+                      {expiresLabel && expiresLabel !== "__expired__" && (
                         <Badge tone="outline" className="text-xs">
                           {expiresLabel}
                         </Badge>
@@ -175,7 +210,9 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                     </div>
                     {p.status.logged_in && p.status.token_preview && (
                       <span className="truncate text-xs font-mono-ui text-text-secondary">
-                        <span className="text-text-tertiary">token </span>
+                        <span className="text-text-tertiary">
+                          {t.components.oauthProviders.token}{" "}
+                        </span>
                         {p.status.token_preview}
                         {p.status.source_label && (
                           <span className="text-text-tertiary">
@@ -220,7 +257,10 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex"
-                      title={`Open ${p.name} docs`}
+                      title={formatMessage(
+                        t.components.oauthProviders.openDocs,
+                        { provider: p.name },
+                      )}
                     >
                       <Button ghost size="icon">
                         <ExternalLink />
@@ -278,7 +318,14 @@ export function OAuthProvidersCard({ onError, onSuccess }: Props) {
           if (disconnectTarget) void handleDisconnect(disconnectTarget);
         }}
         title={`${t.oauth.disconnect} ${disconnectTarget?.name ?? ""}?`}
-        description={`This will remove the stored OAuth tokens for ${disconnectTarget?.name ?? "this provider"}. You will need to re-authenticate to use it again.`}
+        description={formatMessage(
+          t.components.oauthProviders.disconnectDescription,
+          {
+            provider:
+              disconnectTarget?.name ??
+              t.components.oauthProviders.providerFallback,
+          },
+        )}
         destructive
         confirmLabel={t.oauth.disconnect}
       />

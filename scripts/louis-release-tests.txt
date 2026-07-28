@@ -30,3 +30,9 @@ tests/tools/test_send_message_tool.py
 tests/tools/test_send_message_telegram_proxy.py
 tests/tools/test_telegram_send_message_caption.py
 tests/run_agent/test_provider_attribution_headers.py
+tests/agent/test_models_dev.py
+tests/hermes_cli/test_backup.py
+tests/hermes_cli/test_webdav_backup.py
+tests/hermes_cli/test_web_server.py
+tests/cron/test_cron_no_agent.py
+tests/cron/test_jobs_crossprocess_lock.py

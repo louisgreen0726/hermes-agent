@@ -56,7 +56,7 @@ hermes [global-options] <command> [subcommand/options]
 | `hermes security audit` | 对 venv、plugin 依赖和固定 MCP 服务器进行按需供应链审计（OSV.dev）。 |
 | `hermes dump` | 可直接复制粘贴的设置摘要，用于支持/调试。 |
 | `hermes debug` | 调试工具——上传日志和系统信息以获取支持。 |
-| `hermes backup` | 将 Hermes 主目录备份为 zip 文件。 |
+| `hermes backup` | 创建本地 ZIP 备份，或通过 WebDAV 上传和恢复完整备份。 |
 | `hermes checkpoints` | 检查/修剪/清除 `~/.hermes/checkpoints/`（`/rollback` 使用的影子存储）。不带参数运行可查看状态概览。 |
 | `hermes import` | 从 zip 文件恢复 Hermes 备份。 |
 | `hermes logs` | 查看、跟踪和过滤 agent/gateway/错误日志文件。 |
@@ -602,6 +602,10 @@ hermes backup [options]
 
 创建 Hermes 配置、skill、会话和数据的 zip 归档。备份不包含 hermes-agent 代码库本身。
 
+:::warning 敏感数据
+完整备份 ZIP 不加密，其中包含 `.env`、API 密钥和 token、会话、skill 以及其他 Hermes 用户数据。请安全保存本地归档，并且只配置你信任的 WebDAV 服务器。
+:::
+
 | 选项 | 说明 |
 |--------|-------------|
 | `-o`, `--output <path>` | zip 文件的输出路径（默认：`~/hermes-backup-<timestamp>.zip`）。 |
@@ -614,6 +618,7 @@ hermes backup [options]
 
 - `*.db-wal`、`*.db-shm`、`*.db-journal` — SQLite 的 WAL/共享内存/日志附属文件。`*.db` 文件已通过 `sqlite3.backup()` 获得一致快照；将活跃附属文件一并打包会导致恢复时看到半提交状态。
 - `checkpoints/` — 每会话轨迹缓存。以 hash 为键，每次会话重新生成；无论如何都无法干净地移植到其他安装。
+- `backups/` — 既有备份、WebDAV 状态和回滚归档。排除此目录可避免备份递归嵌套。
 - `hermes-agent` 代码本身（这是用户数据备份，不是仓库快照）。
 
 ### 示例
@@ -624,6 +629,47 @@ hermes backup -o /tmp/hermes.zip        # 完整备份到指定路径
 hermes backup --quick                   # 仅状态快速快照
 hermes backup --quick --label "pre-upgrade"  # 带标签的快速快照
 ```
+
+### WebDAV 云备份
+
+WebDAV 保存的是本地完整备份实现生成的同一份原始 ZIP。上传先写入 `.part` 文件，只有 ZIP 及其 SHA-256 manifest 都完整后，备份才会出现在可恢复列表中。
+
+| 命令 | 说明 |
+|------|------|
+| `hermes backup webdav status [--json]` | 显示脱敏设置、托管 Cron 任务以及最近一次成功或失败结果。 |
+| `hermes backup webdav test` | 验证 MKCOL、PUT、GET、PROPFIND、DELETE 和 MOVE 支持。 |
+| `hermes backup webdav upload` | 立即创建并上传一份完整备份。 |
+| `hermes backup webdav list [--json]` | 列出使用此远端路径的所有设备上的完整可恢复备份。 |
+| `hermes backup webdav restore <backup-id> [--yes]` | 校验、创建本地回滚保护并恢复所选备份。 |
+
+首次配置、修改凭据、连接测试、立即备份、浏览恢复以及自动备份开关都可通过 **`hermes manage` → WebDAV 云备份与恢复** 完成。向导会先测试候选配置，成功后才替换当前设置。
+
+行为设置保存在基础 Hermes Home 的 `config.yaml`：
+
+```yaml
+backup:
+  webdav:
+    enabled: true
+    url: "https://dav.example.com/path"
+    remote_path: "hermes-backups"
+    device_name: "my-device"
+    schedule: "0 3 * * *"
+    retention: 14
+```
+
+Basic Auth 凭据单独保存在基础 `.env` 的 `HERMES_WEBDAV_USERNAME` 和 `HERMES_WEBDAV_PASSWORD` 中。两者都留空时使用匿名 WebDAV。不要在 URL 中嵌入凭据。
+
+启用后，Hermes 会在基础 Hermes Home 中维护唯一一个 Gateway `no_agent` Cron 任务。默认按本地时间每天 03:00 执行，并保留当前设备最近 14 份完整备份。该任务不调用模型，也不消耗 token；只有 Gateway 调度器正在运行时才会执行，错过的任务不会补跑。
+
+在新设备上恢复：
+
+1. 在新设备上安装 Hermes。
+2. 打开 `hermes manage`，配置同一个 WebDAV 服务器和远端路径。
+3. 运行 `hermes backup webdav test`。
+4. 运行 `hermes backup webdav list`，记录所需的备份 ID。
+5. 运行 `hermes backup webdav restore <backup-id>`。
+
+恢复会在修改本地数据前校验 manifest、大小、SHA-256、ZIP 完整性、归档路径和 Hermes 版本。Hermes 会创建回滚 ZIP，停止 Gateway 并在结束后恢复其原运行状态，同时保留目标设备自己的 WebDAV 凭据、设备身份以及唯一的托管 Cron 任务。
 
 ## `hermes checkpoints`
 

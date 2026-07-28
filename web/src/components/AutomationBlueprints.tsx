@@ -12,6 +12,8 @@ import { Toast } from "@nous-research/ui/ui/components/toast";
 import { api } from "@/lib/api";
 import type { AutomationBlueprint, AutomationBlueprintField } from "@/lib/api";
 import { cn, themedBody } from "@/lib/utils";
+import { useI18n } from "@/i18n";
+import { formatMessage } from "@/lib/locale-format";
 
 interface AutomationBlueprintsProps {
   profile: string;
@@ -20,9 +22,15 @@ interface AutomationBlueprintsProps {
 }
 
 /** Initial form values for a blueprint = each field's default (or ""). */
-function initialValues(blueprint: AutomationBlueprint): Record<string, string> {
+function initialValues(
+  blueprint: AutomationBlueprint,
+  localizedDefaults: Record<string, string>,
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const f of blueprint.fields) out[f.name] = f.default ?? "";
+  for (const f of blueprint.fields) {
+    out[f.name] =
+      localizedDefaults[`${blueprint.key}.${f.name}`] ?? f.default ?? "";
+  }
   return out;
 }
 
@@ -30,17 +38,21 @@ function FieldInput({
   field,
   value,
   onChange,
+  optionLabels,
+  placeholder,
 }: {
   field: AutomationBlueprintField;
   value: string;
   onChange: (v: string) => void;
+  optionLabels: Record<string, string>;
+  placeholder: string;
 }) {
   if (field.type === "enum" || field.type === "weekdays") {
     return (
       <Select value={value} onValueChange={(v) => onChange(v)}>
         {field.options.map((opt) => (
           <SelectOption key={opt} value={opt}>
-            {opt}
+            {optionLabels[opt] ?? opt}
           </SelectOption>
         ))}
       </Select>
@@ -60,7 +72,7 @@ function FieldInput({
     <Input
       type="text"
       value={value}
-      placeholder={field.help || field.label}
+      placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
     />
   );
@@ -77,8 +89,12 @@ function BlueprintCard({
   showToast: (message: string, type: "error" | "success") => void;
   onCreated?: () => void;
 }) {
+  const { t } = useI18n();
+  const strings = t.components.automationBlueprints;
   const [open, setOpen] = useState(false);
-  const [values, setValues] = useState<Record<string, string>>(() => initialValues(blueprint));
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    initialValues(blueprint, strings.fieldDefaults),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,10 +103,16 @@ function BlueprintCard({
     setError(null);
     try {
       const job = await api.instantiateAutomationBlueprint({ blueprint: blueprint.key, values }, profile);
-      const when = job.schedule_display ? ` — ${job.schedule_display}` : "";
-      showToast(`${blueprint.title} scheduled${when}`, "success");
+      const when = job.schedule?.expr ? ` — ${job.schedule.expr}` : "";
+      showToast(
+        formatMessage(strings.scheduled, {
+          title: strings.titles[blueprint.key] ?? blueprint.title,
+          when,
+        }),
+        "success",
+      );
       setOpen(false);
-      setValues(initialValues(blueprint));
+      setValues(initialValues(blueprint, strings.fieldDefaults));
       onCreated?.();
     } catch (e) {
       // 422 from the API carries the slot-level validation message.
@@ -99,7 +121,11 @@ function BlueprintCard({
     } finally {
       setSubmitting(false);
     }
-  }, [blueprint, values, profile, showToast, onCreated]);
+  }, [blueprint, values, profile, showToast, onCreated, strings]);
+
+  const title = strings.titles[blueprint.key] ?? blueprint.title;
+  const description =
+    strings.descriptions[blueprint.key] ?? blueprint.description;
 
   return (
     <Card className={cn("overflow-hidden", themedBody)}>
@@ -108,13 +134,13 @@ function BlueprintCard({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Wand2 className="h-4 w-4 shrink-0 opacity-70" />
-              <span className="font-medium">{blueprint.title}</span>
+              <span className="font-medium">{title}</span>
             </div>
-            <p className="mt-1 text-sm opacity-70">{blueprint.description}</p>
+            <p className="mt-1 text-sm opacity-70">{description}</p>
             <div className="mt-2 flex flex-wrap gap-1">
               {blueprint.tags.map((t) => (
                 <Badge key={t} tone="secondary">
-                  {t}
+                  {strings.tagLabels[t] ?? t}
                 </Badge>
               ))}
             </div>
@@ -124,7 +150,7 @@ function BlueprintCard({
             size="sm"
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Cancel" : "Set up"}
+            {open ? strings.cancel : strings.setup}
           </Button>
         </div>
 
@@ -132,19 +158,35 @@ function BlueprintCard({
           <div className="space-y-3 border-t pt-3">
             {blueprint.fields.map((f) => (
               <div key={f.name} className="space-y-1">
-                <Label htmlFor={`${blueprint.key}-${f.name}`}>{f.label}</Label>
+                <Label htmlFor={`${blueprint.key}-${f.name}`}>
+                  {strings.fieldLabels[`${blueprint.key}.${f.name}`] ??
+                    strings.fieldLabels[f.name] ??
+                    f.label}
+                </Label>
                 <FieldInput
                   field={f}
                   value={values[f.name] ?? ""}
                   onChange={(v) => setValues((prev) => ({ ...prev, [f.name]: v }))}
+                  optionLabels={strings.optionLabels}
+                  placeholder={
+                    strings.fieldHelp[`${blueprint.key}.${f.name}`] ??
+                    strings.fieldHelp[f.name] ??
+                    strings.fieldLabels[`${blueprint.key}.${f.name}`] ??
+                    strings.fieldLabels[f.name] ??
+                    (f.help || f.label)
+                  }
                 />
                 {f.help && f.type !== "text" ? (
-                  <p className="text-xs opacity-60">{f.help}</p>
+                  <p className="text-xs opacity-60">
+                    {strings.fieldHelp[`${blueprint.key}.${f.name}`] ??
+                      strings.fieldHelp[f.name] ??
+                      f.help}
+                  </p>
                 ) : null}
               </div>
             ))}
             {error ? (
-              <p className="text-sm text-red-500" role="alert">
+              <p className="text-sm text-destructive" role="alert">
                 {error}
               </p>
             ) : null}
@@ -154,7 +196,7 @@ function BlueprintCard({
                 disabled={submitting}
                 prefix={submitting ? <Spinner /> : <Clock />}
               >
-                Schedule it
+                {strings.scheduleIt}
               </Button>
             </div>
           </div>
@@ -172,6 +214,7 @@ function BlueprintCard({
  */
 export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprintsProps) {
   const { toast, showToast } = useToast();
+  const { t } = useI18n();
   const [blueprints, setBlueprints] = useState<AutomationBlueprint[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -191,17 +234,28 @@ export function AutomationBlueprints({ profile, onCreated }: AutomationBlueprint
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-red-500">Couldn't load blueprints: {loadError}</p>;
+    return (
+      <p className="text-sm text-destructive">
+        {formatMessage(t.components.automationBlueprints.loadFailed, {
+          error: loadError,
+        })}
+      </p>
+    );
   }
   if (blueprints === null) {
     return (
       <div className="flex items-center gap-2 opacity-70">
-        <Spinner className="h-4 w-4" /> Loading blueprints…
+        <Spinner className="h-4 w-4" />
+        {t.components.automationBlueprints.loading}
       </div>
     );
   }
   if (blueprints.length === 0) {
-    return <p className="opacity-70">No automation blueprints available.</p>;
+    return (
+      <p className="opacity-70">
+        {t.components.automationBlueprints.empty}
+      </p>
+    );
   }
 
   return (

@@ -2104,9 +2104,24 @@ DEFAULT_CONFIG = {
         },
     },
 
+    # Root-level full backup settings. WebDAV credentials live in .env; all
+    # behavioral settings stay in config.yaml.
+    "backup": {
+        "webdav": {
+            "enabled": False,
+            "url": "",
+            "remote_path": "hermes-backups",
+            "device_name": "",
+            "schedule": "0 3 * * *",
+            "retention": 14,
+        },
+    },
+
     # Web dashboard settings
     "dashboard": {
-        "theme": "default",  # Dashboard visual theme: "default", "midnight", "ember", "mono", "cyberpunk", "rose"
+        # Only applies when the user has not explicitly chosen a theme. An
+        # explicit legacy "default" remains Hermes Teal.
+        "theme": "hermes-light-large",
         # Process-isolation rollout controls. Runtime reads these through the
         # raw config loader, so tui_gateway.server also owns explicit defaults.
         "turn_isolation": False,

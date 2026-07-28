@@ -33,10 +33,13 @@ logger = logging.getLogger(__name__)
 
 MODELS_DEV_URL = "https://models.dev/api.json"
 _MODELS_DEV_CACHE_TTL = 3600  # 1 hour in-memory
+_MODELS_DEV_FAILURE_TTL = 300  # avoid repeating the same offline probe per provider
+_MODELS_DEV_REQUEST_TIMEOUT = (3.05, 15)  # connect, read
 
 # In-memory cache
 _models_dev_cache: Dict[str, Any] = {}
 _models_dev_cache_time: float = 0
+_models_dev_failure_time: float = 0
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +260,7 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
     function always hits the network and only falls back to disk if the
     network call fails.
     """
-    global _models_dev_cache, _models_dev_cache_time
+    global _models_dev_cache, _models_dev_cache_time, _models_dev_failure_time
 
     # Stage 1: fresh in-memory cache wins. This is the hot path on
     # long-lived processes — no I/O, no system calls.
@@ -267,6 +270,19 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
         and (time.time() - _models_dev_cache_time) < _MODELS_DEV_CACHE_TTL
     ):
         return _models_dev_cache
+
+    # A single picker build asks for metadata for many providers. If the
+    # registry is unreachable and no disk cache exists, retrying the same
+    # connection once per provider turns one bounded timeout into minutes of
+    # UI blocking. Remember an empty failure briefly; explicit refresh still
+    # bypasses this guard.
+    if (
+        not force_refresh
+        and not _models_dev_cache
+        and _models_dev_failure_time
+        and (time.time() - _models_dev_failure_time) < _MODELS_DEV_FAILURE_TTL
+    ):
+        return {}
 
     # Stage 2: fresh-by-mtime disk cache short-circuits the network call.
     # Only kicks in on cold-start processes (in-mem cache is empty or
@@ -290,12 +306,13 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
 
     # Stage 3: network fetch.
     try:
-        response = requests.get(MODELS_DEV_URL, timeout=15)
+        response = requests.get(MODELS_DEV_URL, timeout=_MODELS_DEV_REQUEST_TIMEOUT)
         response.raise_for_status()
         data = response.json()
         if isinstance(data, dict) and data:
             _models_dev_cache = data
             _models_dev_cache_time = time.time()
+            _models_dev_failure_time = 0
             _save_disk_cache(data)
             logger.debug(
                 "Fetched models.dev registry: %d providers, %d total models",
@@ -314,6 +331,8 @@ def fetch_models_dev(force_refresh: bool = False) -> Dict[str, Any]:
         if _models_dev_cache:
             _models_dev_cache_time = time.time() - _MODELS_DEV_CACHE_TTL + 300
             logger.debug("Loaded models.dev from disk cache (%d providers)", len(_models_dev_cache))
+        else:
+            _models_dev_failure_time = time.time()
 
     return _models_dev_cache
 

@@ -35,15 +35,15 @@ def test_louis_versions_are_distinct_and_consistent():
         (ROOT / "package-lock.json").read_text(encoding="utf-8")
     )
 
-    assert __version__ == "Louis-0.19.0.3"
-    assert metadata["project"]["version"] == "0.19.0+Louis.3"
+    assert __version__ == "Louis-0.19.0.4"
+    assert metadata["project"]["version"] == "0.19.0+Louis.4"
     expected_desktop_version = metadata["project"]["version"].replace("+", "-").lower()
     assert desktop_package["version"] == expected_desktop_version
     assert workspace_lock["packages"]["apps/desktop"]["version"] == (
         expected_desktop_version
     )
     assert __upstream_version__ == "0.19.0"
-    assert __release_date__ == "2026.7.27"
+    assert __release_date__ == "2026.7.28"
     assert __upstream_release_date__ == "2026.7.20"
 
 

@@ -13,6 +13,8 @@ import { useProfileScope } from "@/contexts/useProfileScope";
 import { api } from "@/lib/api";
 import { cn, themedBody } from "@/lib/utils";
 import { useTheme } from "@/themes";
+import { useI18n } from "@/i18n";
+import { formatMessage } from "@/lib/locale-format";
 
 type ConsoleFrame =
   | {
@@ -60,23 +62,23 @@ function buildTerminalTheme(background: string, foreground: string) {
     foreground,
     cursor: foreground,
     cursorAccent: background,
-    selectionBackground: "rgba(255, 255, 255, 0.25)",
-    black: "#000000",
-    red: "#ff5f67",
-    green: "#5fffb0",
-    yellow: "#ffd166",
-    blue: "#7aa2ff",
-    magenta: "#d597ff",
-    cyan: "#58e6ff",
-    white: foreground,
-    brightBlack: "#666666",
-    brightRed: "#ff8b90",
-    brightGreen: "#8dffc8",
-    brightYellow: "#ffe08a",
-    brightBlue: "#9dbaff",
-    brightMagenta: "#e4b7ff",
-    brightCyan: "#8ef0ff",
-    brightWhite: "#ffffff",
+    selectionBackground: "rgba(15, 118, 110, 0.2)",
+    black: "#171A1A",
+    red: "#B42318",
+    green: "#147D4D",
+    yellow: "#946200",
+    blue: "#0F766E",
+    magenta: "#7A3E9D",
+    cyan: "#0F766E",
+    white: "#F7F9F8",
+    brightBlack: "#4B5654",
+    brightRed: "#C43228",
+    brightGreen: "#19965E",
+    brightYellow: "#A97000",
+    brightBlue: "#0D8A80",
+    brightMagenta: "#9150B5",
+    brightCyan: "#0D8A80",
+    brightWhite: foreground,
   };
 }
 
@@ -98,6 +100,7 @@ function isPrintable(data: string): boolean {
 }
 
 export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
+  const { t } = useI18n();
   const modalRef = useModalBehavior({ open, onClose });
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XtermTerminal | null>(null);
@@ -112,7 +115,7 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
   const hasReadyFrameRef = useRef(false);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
-  const [consoleProfile, setConsoleProfile] = useState("current");
+  const [consoleProfile, setConsoleProfile] = useState("");
   const { profile } = useProfileScope();
   const { theme } = useTheme();
 
@@ -178,11 +181,11 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
       setConnectionState("running");
       if (!sendFrame({ type: "input", line })) {
         activeCommandRef.current = false;
-        writeLine(term, "\x1b[31mConsole is not connected.\x1b[0m");
+        writeLine(term, `\x1b[31m${t.components.console.notConnected}\x1b[0m`);
         showPrompt();
       }
     },
-    [cancelCommand, sendFrame, showPrompt],
+    [cancelCommand, sendFrame, showPrompt, t.components.console.notConnected],
   );
 
   const recallHistory = useCallback(
@@ -276,7 +279,7 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
         promptRef.current = nextPrompt;
         inputPromptRef.current = nextPrompt;
         hasReadyFrameRef.current = true;
-        setConsoleProfile(frame.profile || "current");
+        setConsoleProfile(frame.profile || "");
         activeCommandRef.current = false;
         setConnectionState("ready");
         term.clear();
@@ -290,7 +293,10 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
       }
 
       if (frame.type === "error") {
-        writeLine(term, `\x1b[31m${frame.message || "Command failed."}\x1b[0m`);
+        writeLine(
+          term,
+          `\x1b[31m${frame.message || t.components.console.commandFailed}\x1b[0m`,
+        );
         return;
       }
 
@@ -301,7 +307,7 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
         if (frame.message) {
           writeLine(term, `\x1b[33m${frame.message}\x1b[0m`);
         }
-        inputPromptRef.current = "Confirm? [y/N] ";
+        inputPromptRef.current = t.components.console.confirmPrompt;
         lineRef.current = "";
         term.write(inputPromptRef.current);
         return;
@@ -317,10 +323,10 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
           return;
         }
         if (frame.status === "timeout") {
-          writeLine(term, "\x1b[31mCommand timed out.\x1b[0m");
+          writeLine(term, `\x1b[31m${t.components.console.timedOut}\x1b[0m`);
         }
         if (frame.status === "cancelled") {
-          writeLine(term, "\x1b[33mCancelled.\x1b[0m");
+          writeLine(term, `\x1b[33m${t.components.console.cancelled}\x1b[0m`);
         }
         pendingCommandRef.current = null;
         setConnectionState("ready");
@@ -333,7 +339,7 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
         showPrompt();
       }
     },
-    [showPrompt],
+    [showPrompt, t.components.console],
   );
 
   useEffect(() => {
@@ -354,8 +360,8 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
       macOptionIsMeta: true,
       scrollback: 3000,
       theme: buildTerminalTheme(
-        theme.terminalBackground ?? "#000000",
-        theme.terminalForeground ?? "#f0e6d2",
+        theme.terminalBackground ?? "#F7F9F8",
+        theme.terminalForeground ?? "#17201E",
       ),
     });
     termRef.current = term;
@@ -392,9 +398,9 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
 
     const dataDisposable = term.onData(handleInputData);
     setConnectionState("connecting");
-    setConsoleProfile(profile || "current");
+    setConsoleProfile(profile || "");
     hasReadyFrameRef.current = false;
-    writeLine(term, "\x1b[2mConnecting to Hermes Console...\x1b[0m");
+    writeLine(term, `\x1b[2m${t.components.console.connecting}\x1b[0m`);
 
     void (async () => {
       try {
@@ -413,13 +419,13 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
             const frame = JSON.parse(String(ev.data)) as ConsoleFrame;
             handleFrame(frame);
           } catch {
-            writeLine(term, "\x1b[31mMalformed console frame.\x1b[0m");
+            writeLine(term, `\x1b[31m${t.components.console.malformedFrame}\x1b[0m`);
           }
         };
 
         ws.onerror = () => {
           setConnectionState("error");
-          writeLine(term, "\x1b[31mConsole websocket error.\x1b[0m");
+          writeLine(term, `\x1b[31m${t.components.console.websocketError}\x1b[0m`);
         };
 
         ws.onclose = (ev) => {
@@ -431,14 +437,22 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
           const reason = ev.reason ? ` ${ev.reason}` : "";
           const message =
             ev.code === 1006 && !hasReadyFrameRef.current
-              ? "Console connection failed before the server handshake. Check that this dashboard is connected to a backend with /api/console."
-              : `Console closed (${ev.code}).${reason}`;
+              ? t.components.console.connectionFailed
+              : formatMessage(t.components.console.closed, {
+                  code: ev.code,
+                  reason,
+                });
           writeLine(term, `\x1b[31m${message}\x1b[0m`);
         };
       } catch (err) {
         if (cancelled) return;
         setConnectionState("error");
-        writeLine(term, `\x1b[31mConsole unavailable: ${err}\x1b[0m`);
+        writeLine(
+          term,
+          `\x1b[31m${formatMessage(t.components.console.unavailable, {
+            error: String(err),
+          })}\x1b[0m`,
+        );
       }
     })();
 
@@ -456,15 +470,15 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
       activeCommandRef.current = false;
       hasReadyFrameRef.current = false;
     };
-  }, [handleFrame, handleInputData, open, profile, theme]);
+  }, [handleFrame, handleInputData, open, profile, t.components.console, theme]);
 
   useEffect(() => {
     if (!open) return;
     const term = termRef.current;
     if (!term) return;
     term.options.theme = buildTerminalTheme(
-      theme.terminalBackground ?? "#000000",
-      theme.terminalForeground ?? "#f0e6d2",
+      theme.terminalBackground ?? "#F7F9F8",
+      theme.terminalForeground ?? "#17201E",
     );
   }, [open, theme]);
 
@@ -501,13 +515,17 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
           <div className="min-w-0 flex-1">
             <h2
               id="hermes-console-title"
-              className="font-mondwest text-display text-base tracking-wider"
+              className="font-mondwest text-display text-base tracking-normal"
             >
-              Hermes Console
+              {t.components.console.title}
             </h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <Badge tone={statusTone}>{connectionState}</Badge>
-              <span className="font-mono">{consoleProfile}</span>
+              <Badge tone={statusTone}>
+                {t.components.console.states[connectionState]}
+              </Badge>
+              <span className="font-mono">
+                {consoleProfile || t.components.console.currentProfile}
+              </span>
             </div>
           </div>
           <Button
@@ -515,12 +533,15 @@ export function HermesConsoleModal({ open, onClose }: HermesConsoleModalProps) {
             size="icon"
             onClick={onClose}
             className="text-muted-foreground hover:text-foreground"
-            aria-label="Close console"
+            aria-label={t.components.console.close}
           >
             <X />
           </Button>
         </header>
-        <div className="min-h-0 flex-1 bg-black">
+        <div
+          className="min-h-0 flex-1"
+          style={{ backgroundColor: "var(--theme-terminal-background)" }}
+        >
           <div
             ref={hostRef}
             className="h-full min-h-0 w-full overflow-hidden p-2 [&_.xterm]:h-full [&_.xterm-viewport]:!bg-transparent"

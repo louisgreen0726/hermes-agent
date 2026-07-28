@@ -132,6 +132,11 @@ export interface ThemeSeriesColors {
 /** Optional hex overrides keyed by shadcn-compat token name (without the
  *  `--color-` prefix). Any key set here wins over the DS cascade. */
 export interface ThemeColorOverrides {
+  textPrimary?: string;
+  textSecondary?: string;
+  textTertiary?: string;
+  textDisabled?: string;
+  textOnAccent?: string;
   card?: string;
   cardForeground?: string;
   popover?: string;
@@ -178,10 +183,10 @@ export interface DashboardTheme {
    *  default swatch cells: [background, midground, warmGlow]. */
   swatchColors?: [string, string, string];
   /** Background color for the embedded terminal pane (xterm.js).
-   *  Hex string. Defaults to `"#000000"` when absent. */
+   *  Hex string. Defaults to `"#F7F9F8"` when absent. */
   terminalBackground?: string;
   /** Default text/cursor color for the embedded terminal pane (xterm.js).
-   *  Hex string. Defaults to `"#f0e6d2"` when absent. */
+   *  Hex string. Defaults to `"#17201E"` when absent. */
   terminalForeground?: string;
 }
 

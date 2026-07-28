@@ -869,7 +869,10 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "dashboard.theme": {
         "type": "select",
         "description": "Web dashboard visual theme",
-        "options": ["default", "midnight", "ember", "mono", "cyberpunk", "rose"],
+        "options": [
+            "hermes-light-large", "default", "default-large", "nous-blue",
+            "midnight", "ember", "mono", "cyberpunk", "rose",
+        ],
     },
     "display.resume_display": {
         "type": "select",
@@ -18593,70 +18596,28 @@ def _normalise_prefix(raw: Optional[str]) -> str:
 
 
 def _render_active_theme_bootstrap_css() -> str:
-    """Critical-CSS shim for the active user theme.
+    """Critical-CSS shim for the active built-in or user theme.
 
     Returns a ``<style>`` block with the ``:root`` CSS variables that
     ``ThemeProvider.applyTheme()`` installs once the
     ``/api/dashboard/themes`` round-trip completes.  The goal is to
-    eliminate the green flash where the first paint shows the bundle's
-    default Hermes Teal canvas before the SPA flips the configured user
-    theme into place.
-
-    Built-in themes return an empty string — their full definitions live
-    in ``web/src/themes/presets.ts`` and are applied by the bundle
-    before paint, so no shim is needed for them.
+    eliminate a light/dark canvas flash before the SPA applies the active
+    theme. The bundled CSS owns the unconfigured light default; this shim
+    preserves every explicit built-in or user preference on first paint.
     """
     try:
         config = load_config()
-        active = cfg_get(config, "dashboard", "theme", default="default")
+        active = cfg_get(
+            config, "dashboard", "theme", default=DEFAULT_DASHBOARD_THEME
+        )
         if not active or not isinstance(active, str):
             return ""
-        # Built-in: the bundle already owns the definition, no flash.
-        if any(b["name"] == active for b in _BUILTIN_DASHBOARD_THEMES):
-            return ""
-        for theme in _discover_user_themes():
-            if theme.get("name") != active:
+        builtin = _BUILTIN_THEME_BOOTSTRAP.get(active)
+        candidates = [builtin] if builtin is not None else _discover_user_themes()
+        for theme in candidates:
+            if builtin is None and theme.get("name") != active:
                 continue
-            palette = theme.get("palette") or {}
-            bg = palette.get("background") or {}
-            mg = palette.get("midground") or {}
-            bg_hex = bg.get("hex", "#0a0a0a") if isinstance(bg, dict) else "#0a0a0a"
-            mg_hex = mg.get("hex", "#e5e5e5") if isinstance(mg, dict) else "#e5e5e5"
-            typo = theme.get("typography") or {}
-            font_sans = typo.get("fontSans") or _THEME_DEFAULT_TYPOGRAPHY["fontSans"]
-            base_size = typo.get("baseSize") or _THEME_DEFAULT_TYPOGRAPHY["baseSize"]
-            # Defensive ``</style>`` escape — current values are well-known
-            # hex/font strings, but this keeps the helper safe if it is
-            # later extended to ship user-authored CSS literals.
-            def _esc(s: str) -> str:
-                return str(s).replace("</", "<\\/")
-            # Variable names MUST match what the bundle actually consumes:
-            #   - ``--background-base`` / ``--midground-base`` come from
-            #     ``layerVars()`` in ``web/src/themes/context.tsx``.
-            #   - ``--theme-font-sans`` / ``--theme-base-size`` come from
-            #     ``typographyVars()`` there, and ``index.css`` applies them
-            #     via ``html{font-family:var(--theme-font-sans);
-            #     font-size:var(--theme-base-size)}``.
-            # The ``html,body`` canvas rule references the SAME variables
-            # instead of literal values so runtime theme switches stay
-            # live: ``applyTheme()`` writes these vars as inline styles on
-            # ``documentElement``, which outrank this stylesheet block in
-            # the cascade — the rule below re-resolves automatically and
-            # never goes stale when the user picks a different theme.
-            return (
-                '<style id="hermes-theme-bootstrap">'
-                ":root{"
-                f"--background-base:{_esc(bg_hex)};"
-                f"--midground-base:{_esc(mg_hex)};"
-                f"--theme-font-sans:{_esc(font_sans)};"
-                f"--theme-base-size:{_esc(base_size)};"
-                "}"
-                "html,body{background-color:var(--background-base);"
-                "color:var(--midground-base);"
-                "font-family:var(--theme-font-sans);"
-                "font-size:var(--theme-base-size);}"
-                "</style>"
-            )
+            return _render_theme_bootstrap_style(theme)
         return ""
     except Exception:
         _log.debug("theme bootstrap render failed", exc_info=True)
@@ -18748,13 +18709,9 @@ def mount_spa(application: FastAPI):
             html = html.replace('href="/fonts/', f'href="{prefix}/fonts/')
             html = html.replace('href="/ds-assets/', f'href="{prefix}/ds-assets/')
             html = html.replace('src="/ds-assets/', f'src="{prefix}/ds-assets/')
-        # Theme flash mitigation: when the active theme is a user theme
-        # (``HERMES_HOME/dashboard-themes/<name>.yaml``), inject a minimal
-        # critical-CSS block so the first paint uses the target palette.
-        # Without this the SPA paints the default Hermes Teal canvas, then
-        # ``ThemeProvider`` flips the CSS variables once
-        # ``/api/dashboard/themes`` resolves.  Built-in themes are already
-        # in the bundle's ``presets.ts`` so no shim is needed for them.
+        # Theme flash mitigation: inject the active built-in or user theme's
+        # critical variables before React mounts. This preserves explicit
+        # dark-theme preferences while the unconfigured default stays light.
         theme_bootstrap = _render_active_theme_bootstrap_css()
         if theme_bootstrap:
             html = html.replace("</head>", f"{theme_bootstrap}</head>", 1)
@@ -18822,6 +18779,7 @@ def mount_spa(application: FastAPI):
 # Built-in dashboard themes — label + description only.  The actual color
 # definitions live in the frontend (web/src/themes/presets.ts).
 _BUILTIN_DASHBOARD_THEMES = [
+    {"name": "hermes-light-large", "label": "Hermes Light (Large)", "description": "Readable light canvas with the spacious Hermes Large layout"},
     {"name": "default",       "label": "Hermes Teal",         "description": "Classic dark teal — the canonical Hermes look"},
     {"name": "default-large", "label": "Hermes Teal (Large)", "description": "Hermes Teal with bigger fonts and roomier spacing"},
     {"name": "nous-blue",     "label": "Nous Blue",           "description": "Light mode — vivid Nous-blue accents on cream canvas"},
@@ -18871,12 +18829,266 @@ _THEME_DEFAULT_LAYOUT: Dict[str, str] = {
 }
 
 _THEME_OVERRIDE_KEYS = {
+    "textPrimary", "textSecondary", "textTertiary", "textDisabled", "textOnAccent",
     "card", "cardForeground", "popover", "popoverForeground",
     "primary", "primaryForeground", "secondary", "secondaryForeground",
     "muted", "mutedForeground", "accent", "accentForeground",
     "destructive", "destructiveForeground", "success", "warning",
     "border", "input", "ring",
 }
+
+DEFAULT_DASHBOARD_THEME = "hermes-light-large"
+_THEME_BOOTSTRAP_OVERRIDE_VARS = {
+    "textPrimary": "--text-primary",
+    "textSecondary": "--text-secondary",
+    "textTertiary": "--text-tertiary",
+    "textDisabled": "--text-disabled",
+    "textOnAccent": "--text-on-accent",
+    "card": "--color-card",
+    "cardForeground": "--color-card-foreground",
+    "popover": "--color-popover",
+    "popoverForeground": "--color-popover-foreground",
+    "primary": "--color-primary",
+    "primaryForeground": "--color-primary-foreground",
+    "secondary": "--color-secondary",
+    "secondaryForeground": "--color-secondary-foreground",
+    "muted": "--color-muted",
+    "mutedForeground": "--color-muted-foreground",
+    "accent": "--color-accent",
+    "accentForeground": "--color-accent-foreground",
+    "destructive": "--color-destructive",
+    "destructiveForeground": "--color-destructive-foreground",
+    "success": "--color-success",
+    "warning": "--color-warning",
+    "border": "--color-border",
+    "input": "--color-input",
+    "ring": "--color-ring",
+}
+
+_BOOTSTRAP_SYSTEM_SANS = (
+    'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+)
+_BOOTSTRAP_CJK_SANS = (
+    'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", '
+    '"Noto Sans CJK SC", Roboto, "Helvetica Neue", Arial, sans-serif'
+)
+_BOOTSTRAP_SYSTEM_MONO = (
+    'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace'
+)
+
+
+def _builtin_bootstrap_theme(
+    background: str,
+    midground: str,
+    *,
+    base_size: str = "15px",
+    line_height: str = "1.55",
+    font_sans: str = _BOOTSTRAP_SYSTEM_SANS,
+    radius: str = "0.5rem",
+    density: str = "comfortable",
+    overrides: Optional[Dict[str, str]] = None,
+    series: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    return {
+        "palette": {
+            "background": {"hex": background, "alpha": 1},
+            "midground": {"hex": midground, "alpha": 1},
+            "foreground": {"hex": "#ffffff", "alpha": 0},
+        },
+        "typography": {
+            "fontSans": font_sans,
+            "fontMono": _BOOTSTRAP_SYSTEM_MONO,
+            "baseSize": base_size,
+            "lineHeight": line_height,
+            "letterSpacing": "0",
+        },
+        "layout": {"radius": radius, "density": density},
+        "colorOverrides": overrides or {},
+        "seriesColors": series or {},
+    }
+
+
+_BUILTIN_THEME_BOOTSTRAP: Dict[str, Dict[str, Any]] = {
+    "hermes-light-large": _builtin_bootstrap_theme(
+        "#FFFFFF",
+        "#171A1A",
+        base_size="18px",
+        line_height="1.65",
+        font_sans=_BOOTSTRAP_CJK_SANS,
+        density="spacious",
+        overrides={
+            "textPrimary": "#171A1A",
+            "textSecondary": "#4B5654",
+            "textTertiary": "#66706E",
+            "textDisabled": "#7B8582",
+            "textOnAccent": "#FFFFFF",
+            "card": "#FFFFFF",
+            "cardForeground": "#171A1A",
+            "popover": "#FFFFFF",
+            "popoverForeground": "#171A1A",
+            "primary": "#0F766E",
+            "primaryForeground": "#FFFFFF",
+            "secondary": "#F6F8F7",
+            "secondaryForeground": "#171A1A",
+            "muted": "#F6F8F7",
+            "mutedForeground": "#4B5654",
+            "accent": "#E7F3F1",
+            "accentForeground": "#171A1A",
+            "destructive": "#B42318",
+            "destructiveForeground": "#FFFFFF",
+            "success": "#147D4D",
+            "warning": "#946200",
+            "border": "#D7DEDB",
+            "input": "#6B7774",
+            "ring": "#0F766E",
+        },
+        series={
+            "inputTokenAccent": "#0F766E",
+            "outputTokenAccent": "#147D4D",
+        },
+    ),
+    "default": _builtin_bootstrap_theme("#041c1c", "#ffe6cb"),
+    "default-large": _builtin_bootstrap_theme(
+        "#041c1c",
+        "#ffe6cb",
+        base_size="18px",
+        line_height="1.65",
+        density="spacious",
+    ),
+    "nous-blue": _builtin_bootstrap_theme(
+        "#E8F2FD",
+        "#0053FD",
+        series={
+            "inputTokenAccent": "#001934",
+            "outputTokenAccent": "#0053fd",
+        },
+    ),
+    "midnight": _builtin_bootstrap_theme(
+        "#0a0a1f", "#d4c8ff", radius="0.75rem"
+    ),
+    "ember": _builtin_bootstrap_theme(
+        "#1a0a06",
+        "#ffd8b0",
+        radius="0.25rem",
+        overrides={"destructive": "#c92d0f", "warning": "#f97316"},
+    ),
+    "mono": _builtin_bootstrap_theme("#0e0e0e", "#eaeaea", radius="0"),
+    "cyberpunk": _builtin_bootstrap_theme(
+        "#040608",
+        "#9bffcf",
+        radius="0",
+        overrides={
+            "success": "#00ff88",
+            "warning": "#ffd700",
+            "destructive": "#ff0055",
+        },
+    ),
+    "rose": _builtin_bootstrap_theme("#1a0f15", "#ffd4e1", radius="1rem"),
+}
+
+
+def _render_theme_bootstrap_style(theme: Dict[str, Any]) -> str:
+    """Render the same core variables ThemeProvider writes on mount."""
+    variables: list[tuple[str, Any]] = []
+    palette = theme.get("palette") or {}
+    for name, (fallback_hex, fallback_alpha) in {
+        "background": ("#0a0a0a", 1.0),
+        "midground": ("#e5e5e5", 1.0),
+        "foreground": ("#ffffff", 0.0),
+    }.items():
+        layer = palette.get(name) or {}
+        layer_hex = (
+            layer.get("hex", fallback_hex) if isinstance(layer, dict) else fallback_hex
+        )
+        try:
+            alpha = (
+                float(layer.get("alpha", fallback_alpha))
+                if isinstance(layer, dict)
+                else fallback_alpha
+            )
+        except (TypeError, ValueError):
+            alpha = fallback_alpha
+        alpha = max(0.0, min(1.0, alpha))
+        variables.extend(
+            [
+                (
+                    f"--{name}",
+                    f"color-mix(in srgb, {layer_hex} {round(alpha * 100)}%, transparent)",
+                ),
+                (f"--{name}-base", layer_hex),
+                (f"--{name}-alpha", alpha),
+            ]
+        )
+
+    typography = theme.get("typography") or {}
+    font_sans = (
+        typography.get("fontSans") or _THEME_DEFAULT_TYPOGRAPHY["fontSans"]
+    )
+    variables.extend(
+        [
+            ("--theme-font-sans", font_sans),
+            (
+                "--theme-font-mono",
+                typography.get("fontMono") or _THEME_DEFAULT_TYPOGRAPHY["fontMono"],
+            ),
+            ("--theme-font-display", typography.get("fontDisplay") or font_sans),
+            (
+                "--theme-base-size",
+                typography.get("baseSize") or _THEME_DEFAULT_TYPOGRAPHY["baseSize"],
+            ),
+            (
+                "--theme-line-height",
+                typography.get("lineHeight")
+                or _THEME_DEFAULT_TYPOGRAPHY["lineHeight"],
+            ),
+            (
+                "--theme-letter-spacing",
+                typography.get("letterSpacing")
+                or _THEME_DEFAULT_TYPOGRAPHY["letterSpacing"],
+            ),
+        ]
+    )
+    layout = theme.get("layout") or {}
+    radius = layout.get("radius") or "0.5rem"
+    density = layout.get("density") or "comfortable"
+    variables.extend(
+        [
+            ("--radius", radius),
+            ("--theme-radius", radius),
+            (
+                "--theme-spacing-mul",
+                {"compact": "0.85", "spacious": "1.2"}.get(density, "1"),
+            ),
+            ("--theme-density", density),
+        ]
+    )
+    overrides = theme.get("colorOverrides") or {}
+    if isinstance(overrides, dict):
+        for key, css_var in _THEME_BOOTSTRAP_OVERRIDE_VARS.items():
+            if overrides.get(key):
+                variables.append((css_var, overrides[key]))
+    series = theme.get("seriesColors") or {}
+    if isinstance(series, dict):
+        if series.get("inputTokenAccent"):
+            variables.append(("--series-input-token", series["inputTokenAccent"]))
+        if series.get("outputTokenAccent"):
+            variables.append(("--series-output-token", series["outputTokenAccent"]))
+
+    def _escape(value: Any) -> str:
+        return str(value).replace("</", "<\\/")
+
+    declarations = "".join(
+        f"{name}:{_escape(value)};" for name, value in variables
+    )
+    return (
+        '<style id="hermes-theme-bootstrap">'
+        f":root{{{declarations}}}"
+        "html,body{background-color:var(--background-base);"
+        "color:var(--midground-base);"
+        "font-family:var(--theme-font-sans);"
+        "font-size:var(--theme-base-size);}"
+        "</style>"
+    )
 
 # Well-known named asset slots themes can populate.  Any other keys under
 # ``assets.custom`` are exposed as ``--theme-asset-custom-<key>`` CSS vars
@@ -19084,7 +19296,9 @@ async def get_dashboard_themes():
     them without a stub.
     """
     config = load_config()
-    active = cfg_get(config, "dashboard", "theme", default="default")
+    active = cfg_get(
+        config, "dashboard", "theme", default=DEFAULT_DASHBOARD_THEME
+    )
     user_themes = _discover_user_themes()
     seen = set()
     themes = []

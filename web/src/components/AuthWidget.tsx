@@ -27,6 +27,8 @@ import { useEffect, useState } from "react";
 import { api, type AuthMeResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { LogOut } from "lucide-react";
+import { useI18n } from "@/i18n";
+import { formatMessage } from "@/lib/locale-format";
 
 interface AuthWidgetProps {
   className?: string;
@@ -41,6 +43,7 @@ function truncateUserId(id: string): string {
 }
 
 export function AuthWidget({ className }: AuthWidgetProps) {
+  const { t } = useI18n();
   const [me, setMe] = useState<AuthMeResponse | null>(null);
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +68,12 @@ export function AuthWidget({ className }: AuthWidgetProps) {
           setHidden(true);
           return;
         }
-        setError("auth status unavailable");
+        setError(t.components.auth.statusUnavailable);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t.components.auth.statusUnavailable]);
 
   if (hidden) return null;
 
@@ -78,7 +81,7 @@ export function AuthWidget({ className }: AuthWidgetProps) {
     return (
       <div
         className={cn(
-          "px-5 py-2 text-[0.65rem] tracking-[0.05em] text-muted-foreground/70",
+          "px-5 py-2 text-[0.65rem] tracking-normal text-muted-foreground/70",
           className,
         )}
       >
@@ -118,18 +121,18 @@ export function AuthWidget({ className }: AuthWidgetProps) {
         "flex shrink-0 items-center justify-between gap-2",
         "px-5 py-2",
         "border-t border-current/10",
-        "text-[0.65rem] tracking-[0.05em]",
+        "text-[0.65rem] tracking-normal",
         className,
       )}
       role="status"
-      aria-label={`Logged in as ${label}`}
+      aria-label={formatMessage(t.components.auth.loggedInAs, { label })}
     >
       <div className="flex min-w-0 flex-col">
         <span className="truncate font-mono text-foreground/90" title={me.user_id}>
           {label}
         </span>
         <span className="truncate text-muted-foreground/70">
-          via {me.provider}
+          {formatMessage(t.components.auth.via, { provider: me.provider })}
         </span>
       </div>
       <button
@@ -140,8 +143,8 @@ export function AuthWidget({ className }: AuthWidgetProps) {
           "transition-colors hover:bg-current/10 hover:text-foreground",
           "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current/40",
         )}
-        aria-label="Log out"
-        title="Log out"
+        aria-label={t.components.auth.logout}
+        title={t.components.auth.logout}
       >
         <LogOut className="h-3.5 w-3.5" />
       </button>

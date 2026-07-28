@@ -303,6 +303,46 @@ class TestFetchModelsDev:
         mock_get.assert_called_once()
         assert "anthropic" in result
 
+    @patch("agent.models_dev.requests.get")
+    def test_empty_network_failure_is_cached_briefly(self, mock_get):
+        """One offline probe must not repeat once per provider in a picker build."""
+        import agent.models_dev as md
+
+        md._models_dev_cache = {}
+        md._models_dev_cache_time = 0
+        md._models_dev_failure_time = 0
+        mock_get.side_effect = md.requests.ConnectionError("offline")
+
+        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
+             patch.object(md, "_load_disk_cache", return_value={}):
+            assert fetch_models_dev() == {}
+            assert fetch_models_dev() == {}
+
+        mock_get.assert_called_once_with(
+            md.MODELS_DEV_URL,
+            timeout=md._MODELS_DEV_REQUEST_TIMEOUT,
+        )
+
+    @patch("agent.models_dev.requests.get")
+    def test_force_refresh_bypasses_failure_cache(self, mock_get):
+        import agent.models_dev as md
+
+        md._models_dev_cache = {}
+        md._models_dev_cache_time = 0
+        md._models_dev_failure_time = md.time.time()
+
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = SAMPLE_REGISTRY
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        with patch.object(md, "_save_disk_cache"):
+            result = fetch_models_dev(force_refresh=True)
+
+        mock_get.assert_called_once()
+        assert result == SAMPLE_REGISTRY
+        assert md._models_dev_failure_time == 0
+
 
 # ---------------------------------------------------------------------------
 # get_model_capabilities — vision via modalities.input

@@ -21,7 +21,7 @@ export function ProfileSwitcher({ collapsed }: ProfileSwitcherProps) {
 
   const currentDashboardLabel = useMemo(
     () =>
-      (t.app.currentProfileOption ?? "this dashboard ({name})").replace(
+      t.app.currentProfileOption.replace(
         "{name}",
         currentProfile || "default",
       ),
@@ -32,7 +32,7 @@ export function ProfileSwitcher({ collapsed }: ProfileSwitcherProps) {
 
   const managed = profile || currentProfile || "default";
   const isOther = !!profile && profile !== currentProfile;
-  const managingLabel = t.app.managingProfile ?? "Managing profile";
+  const managingLabel = t.app.managingProfile;
 
   return (
     <div
@@ -45,7 +45,7 @@ export function ProfileSwitcher({ collapsed }: ProfileSwitcherProps) {
       <Users
         className={cn(
           "h-3.5 w-3.5 shrink-0",
-          isOther ? "text-amber-300" : "text-text-tertiary",
+          isOther ? "text-warning" : "text-text-tertiary",
         )}
       />
 
@@ -58,7 +58,7 @@ export function ProfileSwitcher({ collapsed }: ProfileSwitcherProps) {
           "[&_[role=listbox]>div]:font-sans [&_[role=listbox]>div]:text-xs",
           "[&_[role=listbox]>div]:normal-case [&_[role=listbox]>div]:tracking-normal",
           isOther &&
-            "[&_button]:border-amber-500/50 [&_button]:text-amber-300",
+            "[&_button]:border-warning/50 [&_button]:text-warning",
         )}
         id="hermes-profile-switcher"
         onValueChange={setProfile}

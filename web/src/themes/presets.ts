@@ -18,6 +18,8 @@ import type { DashboardTheme, ThemeTypography, ThemeLayout } from "./types";
 /** Default system stack — neutral, safe fallback for every platform. */
 const SYSTEM_SANS =
   'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+const CJK_SYSTEM_SANS =
+  'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", Roboto, "Helvetica Neue", Arial, sans-serif';
 const SYSTEM_MONO =
   'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace';
 
@@ -71,7 +73,7 @@ export const midnightTheme: DashboardTheme = {
     fontMono: `"JetBrains Mono", ${SYSTEM_MONO}`,
     fontUrl:
       "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap",
-    letterSpacing: "-0.005em",
+    letterSpacing: "0",
   },
   layout: {
     ...DEFAULT_LAYOUT,
@@ -228,7 +230,68 @@ export const defaultLargeTheme: DashboardTheme = {
   },
 };
 
+/** Default light theme with the exact typography and layout scale of Teal Large. */
+export const hermesLightLargeTheme: DashboardTheme = {
+  name: "hermes-light-large",
+  label: "Hermes Light (Large)",
+  description: "Readable light canvas with the spacious Hermes Large layout",
+  palette: {
+    background: { hex: "#FFFFFF", alpha: 1 },
+    midground: { hex: "#171A1A", alpha: 1 },
+    foreground: { hex: "#FFFFFF", alpha: 0 },
+    warmGlow: "rgba(15, 118, 110, 0.12)",
+    noiseOpacity: 0,
+  },
+  typography: {
+    ...DEFAULT_TYPOGRAPHY,
+    fontSans: CJK_SYSTEM_SANS,
+    baseSize: "18px",
+    lineHeight: "1.65",
+    letterSpacing: "0",
+  },
+  layout: {
+    ...DEFAULT_LAYOUT,
+    density: "spacious",
+  },
+  colorOverrides: {
+    textPrimary: "#171A1A",
+    textSecondary: "#4B5654",
+    textTertiary: "#66706E",
+    textDisabled: "#7B8582",
+    textOnAccent: "#FFFFFF",
+    card: "#FFFFFF",
+    cardForeground: "#171A1A",
+    popover: "#FFFFFF",
+    popoverForeground: "#171A1A",
+    primary: "#0F766E",
+    primaryForeground: "#FFFFFF",
+    secondary: "#F6F8F7",
+    secondaryForeground: "#171A1A",
+    muted: "#F6F8F7",
+    mutedForeground: "#4B5654",
+    accent: "#E7F3F1",
+    accentForeground: "#171A1A",
+    destructive: "#B42318",
+    destructiveForeground: "#FFFFFF",
+    success: "#147D4D",
+    warning: "#946200",
+    border: "#D7DEDB",
+    input: "#6B7774",
+    ring: "#0F766E",
+  },
+  terminalBackground: "#F7F9F8",
+  terminalForeground: "#17201E",
+  seriesColors: {
+    inputTokenAccent: "#0F766E",
+    outputTokenAccent: "#147D4D",
+  },
+  swatchColors: ["#FFFFFF", "#171A1A", "#0F766E"],
+};
+
+export const DEFAULT_THEME_NAME = "hermes-light-large";
+
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
+  "hermes-light-large": hermesLightLargeTheme,
   default: defaultTheme,
   "default-large": defaultLargeTheme,
   "nous-blue": nousBlueTheme,

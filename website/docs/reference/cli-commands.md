@@ -65,7 +65,7 @@ hermes [global-options] <command> [subcommand/options]
 | `hermes dump` | Copy-pasteable setup summary for support/debugging. |
 | `hermes prompt-size` | Show a byte breakdown of the system prompt + tool schemas (skills index, memory, profile). Runs offline. |
 | `hermes debug` | Debug tools — upload logs and system info for support. |
-| `hermes backup` | Back up Hermes home directory to a zip file. |
+| `hermes backup` | Create local zip backups or upload and restore full backups through WebDAV. |
 | `hermes checkpoints` | Inspect / prune / clear `~/.hermes/checkpoints/` (the shadow store used by `/rollback`). Run with no args for a status overview. |
 | `hermes import` | Restore a Hermes backup from a zip file. |
 | `hermes logs` | View, tail, and filter agent/gateway/error log files. |
@@ -874,6 +874,10 @@ hermes backup [options]
 
 Create a zip archive of your Hermes configuration, skills, sessions, and data. The backup excludes the hermes-agent codebase itself.
 
+:::warning Sensitive data
+Full backup ZIP files are unencrypted. They include `.env`, API keys and tokens, sessions, skills, and other Hermes user data. Store local archives securely and only configure a WebDAV server you trust.
+:::
+
 | Option | Description |
 |--------|-------------|
 | `-o`, `--output <path>` | Output path for the zip file (default: `~/hermes-backup-<timestamp>.zip`). |
@@ -886,6 +890,7 @@ The backup uses SQLite's `backup()` API for safe copying, so it works correctly 
 
 - `*.db-wal`, `*.db-shm`, `*.db-journal` — SQLite's WAL / shared-memory / journal sidecars. The `*.db` file already got a consistent snapshot via `sqlite3.backup()`; shipping the live sidecars alongside it would let a restore see a half-committed state.
 - `checkpoints/` — per-session trajectory caches. Hash-keyed and regenerated per session; wouldn't port cleanly to another install anyway.
+- `backups/` — prior backups, WebDAV state, and rollback archives. Excluding this directory prevents recursively nesting backups.
 - The `hermes-agent` code itself (this is a user-data backup, not a repo snapshot).
 
 ### Examples
@@ -896,6 +901,47 @@ hermes backup -o /tmp/hermes.zip        # Full backup to specific path
 hermes backup --quick                   # Quick state-only snapshot
 hermes backup --quick --label "pre-upgrade"  # Quick snapshot with label
 ```
+
+### WebDAV cloud backups
+
+WebDAV stores the same raw, complete ZIP produced by the local backup implementation. Uploads are staged as `.part` files and only become restorable after the ZIP and its SHA-256 manifest are complete.
+
+| Command | Description |
+|---------|-------------|
+| `hermes backup webdav status [--json]` | Show redacted settings, the managed Cron job, and the most recent success or failure. |
+| `hermes backup webdav test` | Verify MKCOL, PUT, GET, PROPFIND, DELETE, and MOVE support. |
+| `hermes backup webdav upload` | Create and upload a full backup immediately. |
+| `hermes backup webdav list [--json]` | List complete restorable backups from every device using this remote path. |
+| `hermes backup webdav restore <backup-id> [--yes]` | Validate, protect with a local rollback ZIP, and restore a selected backup. |
+
+Use **`hermes manage` → WebDAV cloud backup and restore** for first-time setup, credential changes, connection testing, manual backup, browsing and restore, and automatic-backup control. The wizard tests the candidate configuration before replacing the current settings.
+
+Behavioral settings are stored in the base Hermes home `config.yaml`:
+
+```yaml
+backup:
+  webdav:
+    enabled: true
+    url: "https://dav.example.com/path"
+    remote_path: "hermes-backups"
+    device_name: "my-device"
+    schedule: "0 3 * * *"
+    retention: 14
+```
+
+Basic Auth credentials are stored separately in the base `.env` as `HERMES_WEBDAV_USERNAME` and `HERMES_WEBDAV_PASSWORD`. Leave both empty for anonymous WebDAV. Do not embed credentials in the URL.
+
+When enabled, Hermes maintains one Gateway `no_agent` Cron job in the base Hermes home. The default schedule is daily at 03:00 local time and retention keeps the newest 14 complete backups for the current device. The task does not call a model or consume tokens. It runs only while the Gateway scheduler is running and does not catch up missed runs.
+
+To restore on a new device:
+
+1. Install Hermes on the new device.
+2. Open `hermes manage` and configure the same WebDAV server and remote path.
+3. Run `hermes backup webdav test`.
+4. Run `hermes backup webdav list` and copy the desired backup ID.
+5. Run `hermes backup webdav restore <backup-id>`.
+
+Restore validates the manifest, size, SHA-256, ZIP integrity, archive paths, and Hermes version before modifying local data. It creates a rollback ZIP, stops and later restores the Gateway's prior running state, and retains the destination device's WebDAV credentials, device identity, and single managed Cron job.
 
 ## `hermes checkpoints`
 

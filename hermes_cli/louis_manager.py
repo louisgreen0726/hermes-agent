@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import getpass
+import socket
 import shutil
 import subprocess
 import sys
@@ -541,6 +543,230 @@ def _logs_menu() -> None:
     _pause()
 
 
+def _prompt_with_default(label: str, current: str) -> str:
+    suffix = f" [{current}]" if current else ""
+    value = input(f"{label}{suffix}: ").strip()
+    return value or current
+
+
+def _configure_webdav_interactive() -> bool:
+    """Test candidate WebDAV settings before replacing persisted values."""
+    from hermes_constants import get_default_hermes_root
+    from hermes_cli.webdav_backup import (
+        DEFAULT_REMOTE_PATH,
+        DEFAULT_RETENTION,
+        DEFAULT_SCHEDULE,
+        WebDAVSettings,
+        apply_webdav_settings,
+        load_webdav_settings,
+        test_webdav_connection,
+    )
+
+    root = get_default_hermes_root().expanduser().resolve()
+    current = load_webdav_settings(root, require_url=False)
+    first_setup = not bool(current.url)
+    if first_setup:
+        print()
+        print("重要安全提示：WebDAV 云备份会直接上传原始 ZIP，不会加密。")
+        print("ZIP 包含 .env、API 密钥、会话、技能和其他 Hermes 数据。")
+        choice = _select(
+            "确认 WebDAV 原始 ZIP 风险",
+            ["我确认 WebDAV 服务器可信，并继续配置"],
+        )
+        if choice != 0:
+            print("已取消配置。")
+            return False
+
+    print()
+    print("请输入 WebDAV 设置。直接按 Enter 可保留方括号中的当前值。")
+    try:
+        url = _prompt_with_default("WebDAV URL", current.url)
+        remote_path = _prompt_with_default(
+            "远端目录", current.remote_path or DEFAULT_REMOTE_PATH
+        )
+        device_name = _prompt_with_default(
+            "设备名称", current.device_name or socket.gethostname()
+        )
+        schedule = _prompt_with_default(
+            "自动备份 Cron（本地时间）", current.schedule or DEFAULT_SCHEDULE
+        )
+        retention_text = _prompt_with_default(
+            "每台设备保留份数", str(current.retention or DEFAULT_RETENTION)
+        )
+        retention = int(retention_text)
+
+        auth_items = ["使用 Basic Auth"]
+        if not current.anonymous:
+            auth_items[0] = "使用 Basic Auth（密码留空则保留当前密码）"
+        auth_items.append("改为匿名 WebDAV（清除已保存凭据）")
+        auth_choice = _select("WebDAV 身份验证", auth_items)
+        if auth_choice is None:
+            print("已取消配置。")
+            return False
+        if auth_choice == 1:
+            username = ""
+            password = ""
+        else:
+            username = _prompt_with_default("用户名", current.username)
+            password_prompt = "密码（输入隐藏）"
+            if current.password:
+                password_prompt += "，留空保留当前密码"
+            password_entered = getpass.getpass(f"{password_prompt}: ")
+            password = password_entered or current.password
+
+        # Validate the schedule before any network or disk mutation.
+        from cron.jobs import parse_schedule
+
+        parse_schedule(schedule)
+        candidate = WebDAVSettings(
+            enabled=True if first_setup else current.enabled,
+            url=url,
+            remote_path=remote_path,
+            device_name=device_name,
+            schedule=schedule,
+            retention=retention,
+            username=username,
+            password=password,
+        )
+        candidate.validate(require_url=True)
+    except (EOFError, KeyboardInterrupt):
+        print("\n已取消配置。")
+        return False
+    except (TypeError, ValueError) as exc:
+        print(f"配置无效：{exc}", file=sys.stderr)
+        return False
+
+    print("\n正在验证 WebDAV 连接与完整读写能力...")
+    try:
+        result = test_webdav_connection(candidate)
+    except Exception as exc:
+        print(f"连接测试失败，原配置未修改：{exc}", file=sys.stderr)
+        return False
+
+    try:
+        apply_webdav_settings(root, candidate)
+    except Exception as exc:
+        print(f"保存 WebDAV 配置失败：{exc}", file=sys.stderr)
+        return False
+
+    print("WebDAV 配置已保存，完整读写测试通过。")
+    if result.get("move_supported"):
+        print("远端支持 MOVE，将使用原子改名完成 ZIP 上传。")
+    else:
+        print("远端不支持 MOVE，将自动使用最终文件二次 PUT 回退。")
+    return True
+
+
+def _browse_and_restore_webdav() -> None:
+    from hermes_constants import get_default_hermes_root
+    from hermes_cli.webdav_backup import (
+        list_remote_backups,
+        load_webdav_settings,
+        restore_backup,
+    )
+
+    root = get_default_hermes_root().expanduser().resolve()
+    try:
+        settings = load_webdav_settings(root)
+        backups = list_remote_backups(settings)
+    except Exception as exc:
+        print(f"读取 WebDAV 备份失败：{exc}", file=sys.stderr)
+        return
+    if not backups:
+        print("没有找到带完整 manifest 的可恢复备份。")
+        return
+    labels = [
+        f"{item.created_at}  |  {item.device_name}  |  {item.backup_id}  |  {item.size} B"
+        for item in backups
+    ]
+    choice = _select("选择要恢复的 WebDAV 备份", labels)
+    if choice is None:
+        return
+    selected = backups[choice]
+    confirm = _select(
+        "确认覆盖当前 Hermes 数据",
+        [f"恢复 {selected.backup_id}（将先创建本地回滚 ZIP）"],
+    )
+    if confirm != 0:
+        print("已取消恢复。")
+        return
+    try:
+        result = restore_backup(
+            selected.backup_id,
+            root=root,
+            settings=settings,
+            confirmed=True,
+        )
+    except Exception as exc:
+        print(f"WebDAV 恢复失败：{exc}", file=sys.stderr)
+        return
+    if result.get("ok"):
+        print(f"恢复完成。本地回滚 ZIP：{result.get('rollback_zip')}")
+
+
+def _set_webdav_automatic(enabled: bool) -> None:
+    from hermes_constants import get_default_hermes_root
+    from hermes_cli.webdav_backup import set_webdav_enabled
+
+    root = get_default_hermes_root().expanduser().resolve()
+    try:
+        set_webdav_enabled(root, enabled)
+    except Exception as exc:
+        print(f"修改自动备份状态失败：{exc}", file=sys.stderr)
+        return
+    if enabled:
+        print("WebDAV 每日自动备份已启用。Gateway 运行时会按计划执行。")
+    else:
+        print("WebDAV 自动备份已停用；手动测试、上传和恢复仍可使用。")
+
+
+def _webdav_menu() -> None:
+    from hermes_constants import get_default_hermes_root
+    from hermes_cli.webdav_backup import load_webdav_settings
+
+    root = get_default_hermes_root().expanduser().resolve()
+    while True:
+        try:
+            current = load_webdav_settings(root, require_url=False)
+            automatic_label = "停用每日自动备份" if current.enabled else "启用每日自动备份"
+            configured = bool(current.url)
+            current_enabled = current.enabled
+        except Exception:
+            automatic_label = "启用每日自动备份"
+            configured = False
+            current_enabled = False
+        actions = [
+            "首次配置 / 修改 WebDAV",
+            "查看脱敏状态",
+            "测试连接与读写能力",
+            "立即生成并上传完整备份",
+            "浏览所有设备备份并恢复",
+            automatic_label,
+        ]
+        title = "WebDAV 云备份与恢复" + ("（已配置）" if configured else "（未配置）")
+        choice = _select(title, actions)
+        if choice is None:
+            return
+        if choice == 0:
+            _configure_webdav_interactive()
+            _pause()
+        elif choice == 1:
+            _run_hermes("backup", "webdav", "status")
+            _pause()
+        elif choice == 2:
+            _run_hermes("backup", "webdav", "test")
+            _pause()
+        elif choice == 3:
+            _run_hermes("backup", "webdav", "upload")
+            _pause()
+        elif choice == 4:
+            _browse_and_restore_webdav()
+            _pause()
+        elif choice == 5:
+            _set_webdav_automatic(not current_enabled)
+            _pause()
+
+
 def _run_louis_update() -> int:
     updater = shutil.which("hermes-update-louis")
     if not updater:
@@ -575,6 +801,7 @@ def run_interactive_manager() -> int:
         "刷新模型目录",
         "修复旧版管理器配置",
         "Gateway 服务管理",
+        "WebDAV 云备份与恢复",
         "初始化设置",
         "配置检查与 Doctor",
         "查看日志",
@@ -601,20 +828,22 @@ def run_interactive_manager() -> int:
         elif choice == 4:
             _gateway_menu()
         elif choice == 5:
+            _webdav_menu()
+        elif choice == 6:
             _run_hermes("setup")
             _pause()
-        elif choice == 6:
+        elif choice == 7:
             _run_hermes("doctor")
             _pause()
-        elif choice == 7:
-            _logs_menu()
         elif choice == 8:
+            _logs_menu()
+        elif choice == 9:
             _run_louis_update()
             _pause()
-        elif choice == 9:
+        elif choice == 10:
             _run_hermes("chat")
             _pause()
-        elif choice == 10:
+        elif choice == 11:
             _run_hermes("uninstall")
             return 0
 

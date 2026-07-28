@@ -6,15 +6,15 @@ This repository is the production source for the Louis distribution of Hermes Ag
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.19.0.3`
-- Python package version: `0.19.0+Louis.3`
+- User-facing version: `Louis-0.19.0.4`
+- Python package version: `0.19.0+Louis.4`
 - Upstream project: `https://github.com/NousResearch/hermes-agent`
 
 The project is based on Hermes Agent by Nous Research and remains distributed under the MIT License. It is an independently maintained fork and is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.19.0.3`.
+- The versioned baseline is `Louis-0.19.0.4`.
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -31,7 +31,7 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.19.0.3 baseline carries:
+The versioned 0.19.0.4 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
@@ -51,6 +51,15 @@ The versioned 0.19.0.3 baseline carries:
   non-network runtime smoke checks before a release is accepted as healthy.
 - Version-aware custom `User-Agent` headers and synchronized Python, CLI, and
   Desktop release metadata.
+- Complete WebDAV backup, per-device retention, no-agent daily scheduling, and
+  rollback-protected restore from both the CLI and `hermes manage`.
+- `Hermes Light (Large)` as the readable default Dashboard theme while
+  preserving every explicit existing theme preference and the Teal themes.
+- Complete Simplified Chinese Dashboard interaction coverage, locale-aware
+  formatting, translated configuration metadata, and a static English-string
+  regression gate.
+- Bounded models.dev offline probes so model pickers remain responsive when the
+  registry and local cache are unavailable.
 
 ## Management center
 
@@ -108,6 +117,7 @@ Do not use `git pull upstream main` on a production checkout.
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.19.0.4](docs/releases/LOUIS_0.19.0.4.md)
 - [Louis Hermes Agent 0.19.0.3](docs/releases/LOUIS_0.19.0.3.md)
 - [Louis Hermes Agent 0.19.0.2](docs/releases/LOUIS_0.19.0.2.md)
 - [Louis Hermes Agent 0.19.0.1 baseline](docs/releases/LOUIS_0.19.0.1.md)

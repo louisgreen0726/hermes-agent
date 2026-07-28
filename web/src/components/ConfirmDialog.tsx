@@ -85,7 +85,7 @@ export function ConfirmDialog({
           <div className="flex-1 min-w-0 flex flex-col gap-1">
             <h2
               id="confirm-dialog-title"
-              className="font-mondwest text-display text-base tracking-wider"
+              className="font-mondwest text-display text-base tracking-normal"
             >
               {title}
             </h2>

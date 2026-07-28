@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -125,7 +124,7 @@ function ProfileActionsMenu({
   };
 
   const itemClass =
-    "flex w-full items-center gap-2.5 px-3 py-2 text-xs uppercase tracking-wider hover:bg-muted/50 disabled:opacity-40";
+    "flex w-full items-center gap-2.5 px-3 py-2 text-xs uppercase tracking-normal hover:bg-muted/50 disabled:opacity-40";
 
   return (
     <div className="relative" data-profile-actions ref={containerRef}>
@@ -262,54 +261,7 @@ export default function ProfilesPage() {
   const { setEnd } = usePageHeader();
   const { setProfile } = useProfileScope();
 
-  // Locale strings with English fallbacks. The enriched keys are optional in
-  // the i18n type so untranslated locales don't break the build — they render
-  // the English literal until translated.
-  const L = useMemo(() => {
-    const p = t.profiles;
-    return {
-      activeProfile: p.activeProfile ?? "Active profile",
-      activeBadge: p.activeBadge ?? "active",
-      setActive: p.setActive ?? "Set as active",
-      activeSet: p.activeSet ?? "Active profile set",
-      gatewayRunning: p.gatewayRunning ?? "Gateway running",
-      gatewayStopped: p.gatewayStopped ?? "Gateway stopped",
-      gatewayRunningWarning:
-        p.gatewayRunningWarning ??
-        "This profile's gateway is running — it will be stopped.",
-      aliasBadge: p.aliasBadge ?? "alias",
-      description: p.description ?? "Description",
-      descriptionPlaceholder:
-        p.descriptionPlaceholder ??
-        "What is this profile good at? Used to route kanban tasks by role.",
-      noDescription: p.noDescription ?? "No description",
-      editDescription: p.editDescription ?? "Edit description",
-      descriptionSaved: p.descriptionSaved ?? "Description saved",
-      reviewBadge: p.reviewBadge ?? "review",
-      autoGenerate: p.autoGenerate ?? "Auto-generate",
-      generating: p.generating ?? "Generating…",
-      describeFailed: p.describeFailed ?? "Could not generate description",
-      distribution: p.distribution ?? "Distribution",
-      advancedOptions: p.advancedOptions ?? "Advanced options",
-      cloneAll:
-        p.cloneAll ?? "Clone everything (memories, sessions, skills, state)",
-      noSkillsOption: p.noSkillsOption ?? "Don't seed bundled skills",
-      descriptionOptional: p.descriptionOptional ?? "Description (optional)",
-      modelOptional: p.modelOptional ?? "Model (optional)",
-      modelInherit: p.modelInherit ?? "Inherit from clone / default",
-      modelLoading: p.modelLoading ?? "Loading models…",
-      modelNone:
-        p.modelNone ?? "No authenticated providers — set a key first",
-      editModel: p.editModel ?? "Change model",
-      modelSaved: p.modelSaved ?? "Model updated",
-      modelSelect: p.modelSelect ?? "Select a model",
-      actions: p.actions ?? "Actions",
-      manageSkills: p.manageSkills ?? "Manage skills & tools",
-      activeSetHint:
-        p.activeSetHint ??
-        "Dashboard switched to manage {name}. New CLI/gateway runs will use this profile too.",
-    };
-  }, [t.profiles]);
+  const L = t.profiles;
 
   // Create modal
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -448,10 +400,7 @@ export default function ProfilesPage() {
       });
       showToast(`${t.profiles.created}: ${name}`, "success");
       if (picked && res.model_set === false) {
-        showToast(
-          `Profile created, but the model could not be saved — set it from the profile editor.`,
-          "error",
-        );
+        showToast(t.profiles.modelSaveAfterCreateFailed, "error");
       }
       setNewName("");
       setNewDescription("");
@@ -755,7 +704,7 @@ export default function ProfilesPage() {
           outlined
           onClick={() => navigate("/profiles/new")}
         >
-          Build
+          {t.profiles.buildProfile}
         </Button>
         <Button
           className="uppercase"
@@ -769,7 +718,7 @@ export default function ProfilesPage() {
     return () => {
       setEnd(null);
     };
-  }, [setEnd, t.common.create, loading, navigate]);
+  }, [setEnd, t.common.create, t.profiles.buildProfile, loading, navigate]);
 
   const cloning = cloneFrom !== null;
 
@@ -823,7 +772,7 @@ export default function ProfilesPage() {
               size="icon"
               onClick={() => setCreateModalOpen(false)}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close}
             >
               <X />
             </Button>
@@ -831,7 +780,7 @@ export default function ProfilesPage() {
             <header className="p-5 pb-3 border-b border-border">
               <h2
                 id="create-profile-title"
-                className="font-mondwest text-display text-base tracking-wider"
+                className="font-mondwest text-display text-base tracking-normal"
               >
                 {t.profiles.newProfile}
               </h2>
@@ -924,7 +873,7 @@ export default function ProfilesPage() {
               </div>
 
               <fieldset className="grid gap-3 border-t border-border pt-4">
-                <legend className="font-mondwest text-display text-xs tracking-wider text-muted-foreground">
+                <legend className="font-mondwest text-display text-xs tracking-normal text-muted-foreground">
                   {L.advancedOptions}
                 </legend>
 
@@ -1248,7 +1197,7 @@ export default function ProfilesPage() {
               size="icon"
               onClick={closeEditor}
               className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              aria-label="Close"
+              aria-label={t.common.close}
             >
               <X />
             </Button>
@@ -1256,7 +1205,7 @@ export default function ProfilesPage() {
             <header className="p-5 pb-3 border-b border-border">
               <h2
                 id="profile-editor-title"
-                className="font-mondwest text-display text-base tracking-wider"
+                className="font-mondwest text-display text-base tracking-normal"
               >
                 {editorKind === "model"
                   ? L.editModel
@@ -1321,7 +1270,7 @@ export default function ProfilesPage() {
                   <div className="flex items-center justify-between gap-2">
                     <Label
                       htmlFor="profile-desc-editor"
-                      className="font-mondwest text-display text-xs tracking-wider text-muted-foreground"
+                      className="font-mondwest text-display text-xs tracking-normal text-muted-foreground"
                     >
                       {L.description}
                     </Label>
@@ -1363,7 +1312,7 @@ export default function ProfilesPage() {
                 <>
                   <Label
                     htmlFor="profile-soul-editor"
-                    className="font-mondwest text-display text-xs tracking-wider text-muted-foreground"
+                    className="font-mondwest text-display text-xs tracking-normal text-muted-foreground"
                   >
                     {t.profiles.soulSection}
                   </Label>

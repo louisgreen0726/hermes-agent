@@ -501,7 +501,7 @@ def _format_size(nbytes: int) -> str:
     return f"{nbytes:.1f} TB"
 
 
-def run_backup(args) -> None:
+def run_backup(args) -> Optional[Path]:
     """Create a zip backup of the Hermes home directory."""
     hermes_root = get_default_hermes_root()
 
@@ -583,7 +583,7 @@ def run_backup(args) -> None:
 
     if not files_to_add and not external_to_add:
         print("No files to back up.")
-        return
+        return None
 
     # Create the zip
     file_count = len(files_to_add) + len(external_to_add)
@@ -678,6 +678,8 @@ def run_backup(args) -> None:
 
     if not errors:
         print(f"\nRestore with: hermes import {out_path.name}")
+        return out_path
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +737,7 @@ def _detect_prefix(zf: zipfile.ZipFile) -> str:
     return ""
 
 
-def run_import(args) -> None:
+def run_import(args) -> bool:
     """Restore a Hermes backup from a zip file."""
     zip_path = Path(args.zipfile).expanduser().resolve()
 
@@ -782,7 +784,7 @@ def run_import(args) -> None:
                 sys.exit(1)
             if answer not in {"y", "yes"}:
                 print("Aborted.")
-                return
+                return False
 
         # Extract
         print(f"\nImporting {file_count} files ...")
@@ -953,6 +955,7 @@ def run_import(args) -> None:
                 print(f"  hermes -p {pname} gateway install")
 
         print("Done. Your Hermes configuration has been restored.")
+        return not errors
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ export function ThemeSwitcher({ collapsed = false, dropUp = false }: ThemeSwitch
 
   const current = availableThemes.find((th) => th.name === themeName);
   const label = current?.label ?? themeName;
-  const sheetTitle = t.theme?.title ?? "Theme";
+  const sheetTitle = t.theme.title;
 
   return (
     <div ref={wrapperRef} className="relative">
@@ -71,8 +71,8 @@ export function ThemeSwitcher({ collapsed = false, dropUp = false }: ThemeSwitch
             ? "text-text-secondary hover:text-foreground hover:bg-transparent"
             : "px-2 py-1 normal-case tracking-normal font-normal text-xs text-text-secondary hover:text-foreground",
         )}
-        title={`${t.theme?.switchTheme ?? "Switch theme"}: ${label}`}
-        aria-label={t.theme?.switchTheme ?? "Switch theme"}
+        title={`${t.theme.switchTheme}: ${label}`}
+        aria-label={t.theme.switchTheme}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
@@ -81,7 +81,7 @@ export function ThemeSwitcher({ collapsed = false, dropUp = false }: ThemeSwitch
 
           {!collapsed && (
             <Typography
-              className="hidden sm:inline text-display tracking-wide text-xs"
+              className="hidden sm:inline text-display tracking-normal text-xs"
             >
               {label}
             </Typography>
@@ -133,7 +133,7 @@ export function ThemeSwitcher({ collapsed = false, dropUp = false }: ThemeSwitch
           >
             <div className="border-b border-current/20 px-3 py-2">
               <Typography
-                className="text-display text-xs tracking-[0.12em] text-text-tertiary"
+                className="text-display text-xs tracking-normal text-text-tertiary"
               >
                 {sheetTitle}
               </Typography>
@@ -190,7 +190,7 @@ function ThemeSwitcherOptions({
 
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <Typography
-                className="truncate text-display text-xs tracking-wide"
+                className="truncate text-display text-xs tracking-normal"
               >
                 {th.label}
               </Typography>
@@ -203,7 +203,7 @@ function ThemeSwitcherOptions({
 
             <Check
               className={cn(
-                "h-3 w-3 shrink-0 text-midground",
+                "h-3 w-3 shrink-0 text-primary",
                 isActive ? "opacity-100" : "opacity-0",
               )}
             />
@@ -232,9 +232,9 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
         <span className="inline-flex items-center gap-1.5">
           <Type className="h-3 w-3 text-text-tertiary" />
           <Typography
-            className="text-display text-xs tracking-[0.12em] text-text-tertiary"
+            className="text-display text-xs tracking-normal text-text-tertiary"
           >
-            {t.theme?.fontTitle ?? "Font"}
+            {t.theme.fontTitle}
           </Typography>
         </span>
       </div>
@@ -250,15 +250,15 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
         <span aria-hidden className="h-4 w-9 shrink-0" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <Typography className="truncate text-xs tracking-normal">
-            {t.theme?.fontDefault ?? "Theme default"}
+            {t.theme.fontDefault}
           </Typography>
           <Typography className="truncate text-xs tracking-normal text-text-tertiary">
-            {t.theme?.fontDefaultHint ?? "Use the active theme's font"}
+            {t.theme.fontDefaultHint}
           </Typography>
         </div>
         <Check
           className={cn(
-            "h-3 w-3 shrink-0 text-midground",
+            "h-3 w-3 shrink-0 text-primary",
             fontId === THEME_DEFAULT_FONT_ID ? "opacity-100" : "opacity-0",
           )}
         />
@@ -271,7 +271,7 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
         return (
           <div key={cat}>
             <div className="px-3 pb-0.5 pt-1.5">
-              <Typography className="text-[0.65rem] uppercase tracking-[0.1em] text-text-tertiary">
+              <Typography className="text-[0.65rem] uppercase tracking-normal text-text-tertiary">
                 {catLabel}
               </Typography>
             </div>
@@ -298,7 +298,7 @@ function FontSection({ fontChoices, fontId, setFont }: FontSectionProps) {
                   </div>
                   <Check
                     className={cn(
-                      "h-3 w-3 shrink-0 text-midground",
+                      "h-3 w-3 shrink-0 text-primary",
                       isActive ? "opacity-100" : "opacity-0",
                     )}
                   />

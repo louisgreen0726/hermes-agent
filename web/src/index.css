@@ -43,40 +43,45 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* Hermes Agent — Nous DS with the LENS_0 (Hermes teal) palette applied
-   statically as the default dashboard theme. */
+/* Hermes Agent — readable light palette applied statically for the first
+   paint. ThemeProvider replaces these tokens for explicit theme choices. */
 /* ------------------------------------------------------------------ */
 
 :root {
-  /* LENS_0 — from design-language/src/ui/components/overlays/index.tsx.
-     These are the defaults for the `default` (Hermes Teal) dashboard theme;
-     ThemeProvider rewrites them as inline styles when a user switches themes. */
+  /* Hermes Light (Large), the default only when no explicit preference exists. */
   --foreground: color-mix(in srgb, #ffffff 0%, transparent);
   --foreground-base: #ffffff;
   --foreground-alpha: 0;
-  --midground: color-mix(in srgb, #ffe6cb 100%, transparent);
-  --midground-base: #ffe6cb;
+  --midground: color-mix(in srgb, #171a1a 100%, transparent);
+  --midground-base: #171a1a;
   --midground-alpha: 1;
-  --background: color-mix(in srgb, #041c1c 100%, transparent);
-  --background-base: #041c1c;
+  --background: color-mix(in srgb, #ffffff 100%, transparent);
+  --background-base: #ffffff;
   --background-alpha: 1;
+
+  --text-primary: #171a1a;
+  --text-secondary: #4b5654;
+  --text-tertiary: #66706e;
+  --text-disabled: #7b8582;
+  --text-on-accent: #ffffff;
 
   /* Typography tokens — rewritten by ThemeProvider. Defaults match the
      system stack so themes that don't override look native. */
-  --theme-font-sans: system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --theme-font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", "Noto Sans CJK SC", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
   --theme-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo,
     Consolas, monospace;
   --theme-font-display: var(--theme-font-sans);
-  --theme-base-size: 15px;
-  --theme-line-height: 1.55;
+  --theme-base-size: 18px;
+  --theme-line-height: 1.65;
   --theme-letter-spacing: 0;
 
   /* Layout tokens. */
   --radius: 0.5rem;
   --theme-radius: 0.5rem;
-  --theme-spacing-mul: 1;
-  --theme-density: comfortable;
+  --theme-spacing-mul: 1.2;
+  --theme-density: spacious;
 
   /* Data-series accents — consumed by Analytics + Models pages for the
      input-vs-output token visualisations (chart bars, table values,
@@ -84,8 +89,8 @@
      look: cream input + emerald-400 output read as warm/cool against
      the dark canvas. Themes override via ThemeProvider, which emits
      these as `--series-input-token` / `--series-output-token`. */
-  --series-input-token: #ffe6cb;
-  --series-output-token: #34d399;
+  --series-input-token: #0f766e;
+  --series-output-token: #147d4d;
 }
 
 /* Theme tokens cascade into the document root so every descendant inherits
@@ -252,4 +257,3 @@ code { font-size: 0.875rem; }
 html[dir="rtl"] {
   direction: rtl;
 }
-

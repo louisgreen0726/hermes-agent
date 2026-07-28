@@ -8,6 +8,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
 import { cn, themedBody } from "@/lib/utils";
+import { formatMessage } from "@/lib/locale-format";
 
 interface Props {
   provider: OAuthProvider;
@@ -58,7 +59,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
       .catch((e) => {
         if (!isMounted.current) return;
         setPhase("error");
-        setErrorMsg(`Failed to start login: ${e}`);
+        setErrorMsg(formatMessage(t.oauth.startFailed, { error: String(e) }));
       });
     return () => {
       isMounted.current = false;
@@ -99,25 +100,38 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
           setPhase("approved");
           if (pollTimer.current !== null)
             window.clearInterval(pollTimer.current);
-          onSuccess(`${provider.name} connected`);
+          onSuccess(formatMessage(t.oauth.providerConnected, { provider: provider.name }));
           window.setTimeout(() => isMounted.current && onClose(), 1500);
         } else if (resp.status !== "pending") {
           setPhase("error");
-          setErrorMsg(resp.error_message || `Login ${resp.status}`);
+          setErrorMsg(
+            resp.error_message ||
+              formatMessage(t.oauth.loginStatus, { status: resp.status }),
+          );
           if (pollTimer.current !== null)
             window.clearInterval(pollTimer.current);
         }
       } catch (e) {
         if (!isMounted.current) return;
         setPhase("error");
-        setErrorMsg(`Polling failed: ${e}`);
+        setErrorMsg(formatMessage(t.oauth.pollingFailed, { error: String(e) }));
         if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
       }
     }, 2000);
     return () => {
       if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
     };
-  }, [start, phase, provider.id, provider.name, onSuccess, onClose]);
+  }, [
+    start,
+    phase,
+    provider.id,
+    provider.name,
+    onSuccess,
+    onClose,
+    t.oauth.loginStatus,
+    t.oauth.pollingFailed,
+    t.oauth.providerConnected,
+  ]);
 
   const handleSubmitPkceCode = async () => {
     if (!start || start.flow !== "pkce") return;
@@ -133,16 +147,16 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
       if (!isMounted.current) return;
       if (resp.ok && resp.status === "approved") {
         setPhase("approved");
-        onSuccess(`${provider.name} connected`);
+        onSuccess(formatMessage(t.oauth.providerConnected, { provider: provider.name }));
         window.setTimeout(() => isMounted.current && onClose(), 1500);
       } else {
         setPhase("error");
-        setErrorMsg(resp.message || "Token exchange failed");
+        setErrorMsg(resp.message || t.oauth.tokenExchangeFailed);
       }
     } catch (e) {
       if (!isMounted.current) return;
       setPhase("error");
-      setErrorMsg(`Submit failed: ${e}`);
+      setErrorMsg(formatMessage(t.oauth.submitFailed, { error: String(e) }));
     }
   };
 
@@ -210,7 +224,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
               id="oauth-modal-title"
               variant="sm"
               mondwest
-              className="tracking-wider uppercase"
+              className="tracking-normal uppercase"
             >
               {t.oauth.connect} {provider.name}
             </H2>
@@ -285,7 +299,7 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
                 {t.oauth.enterCodePrompt}
               </p>
               <div className="flex items-center justify-between gap-2 border border-border bg-secondary/30 p-4">
-                <code className="font-mono-ui text-2xl tracking-widest text-foreground">
+                <code className="font-mono-ui text-2xl tracking-normal text-foreground">
                   {deviceCode}
                 </code>
                 <Button
@@ -379,7 +393,11 @@ export function OAuthLoginModal({ provider, onClose, onSuccess }: Props) {
                       .catch((e) => {
                         if (!isMounted.current) return;
                         setPhase("error");
-                        setErrorMsg(`${t.common.retry} failed: ${e}`);
+                        setErrorMsg(
+                          formatMessage(t.oauth.retryFailed, {
+                            error: String(e),
+                          }),
+                        );
                       });
                   }}
                 >

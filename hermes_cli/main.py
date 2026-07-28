@@ -4613,6 +4613,13 @@ def cmd_backup(args):
         run_backup(args)
 
 
+def cmd_webdav_backup(args):
+    """Manage full backups stored on a WebDAV server."""
+    from hermes_cli.webdav_backup import run_webdav_command
+
+    run_webdav_command(args)
+
+
 def cmd_import(args):
     """Restore a Hermes backup from a zip file."""
     from hermes_cli.backup import run_import
@@ -15135,7 +15142,11 @@ def main():
     # =========================================================================
     # backup command  (parser built in hermes_cli/subcommands/backup.py)
     # =========================================================================
-    build_backup_parser(subparsers, cmd_backup=cmd_backup)
+    build_backup_parser(
+        subparsers,
+        cmd_backup=cmd_backup,
+        cmd_webdav_backup=cmd_webdav_backup,
+    )
 
     # =========================================================================
     # checkpoints command

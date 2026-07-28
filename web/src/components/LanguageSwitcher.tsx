@@ -78,7 +78,7 @@ export function LanguageSwitcher({ collapsed = false, dropUp = false }: Language
       >
         <span className="inline-flex items-center gap-1.5">
           <Typography
-            className="hidden sm:inline text-display tracking-wide text-xs"
+            className="hidden sm:inline text-display tracking-normal text-xs"
           >
             {locale === "en" ? "EN" : current.name}
           </Typography>
@@ -150,7 +150,7 @@ function LanguageSwitcherOptions({
             aria-selected={selected}
             className={cn(
               "w-full text-left px-3 py-1.5 flex items-center gap-2 cursor-pointer",
-              "font-sans text-display text-xs tracking-[0.08em]",
+              "font-sans text-display text-xs tracking-normal",
               "hover:bg-accent hover:text-accent-foreground transition-colors",
               selected ? "font-semibold text-foreground" : "text-muted-foreground",
             )}
@@ -164,7 +164,7 @@ function LanguageSwitcherOptions({
           >
             <span className="truncate">{meta.name}</span>
 
-            {selected && <Check className="ml-auto h-3 w-3 shrink-0 text-midground" />}
+            {selected && <Check className="ml-auto h-3 w-3 shrink-0 text-primary" />}
           </button>
         );
       })}

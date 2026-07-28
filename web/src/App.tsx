@@ -98,6 +98,7 @@ import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
 import type { PluginManifest } from "@/plugins";
 import { useTheme } from "@/themes";
+import { formatMessage, formatNumber } from "@/lib/locale-format";
 import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
 import { api } from "@/lib/api";
 import type { StatusResponse, UpdateCheckResponse } from "@/lib/api";
@@ -117,7 +118,6 @@ function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
 const CHAT_NAV_ITEM: NavItem = {
   path: "/chat",
   labelKey: "chat",
-  label: "Chat",
   icon: Terminal,
 };
 
@@ -164,38 +164,34 @@ const BUILTIN_NAV_REST: NavItem[] = [
   {
     path: "/sessions",
     labelKey: "sessions",
-    label: "Sessions",
     icon: MessageSquare,
   },
-  { path: "/files", label: "Files", icon: FolderOpen },
+  { path: "/files", labelKey: "files", icon: FolderOpen },
   {
     path: "/analytics",
     labelKey: "analytics",
-    label: "Analytics",
     icon: BarChart3,
   },
   {
     path: "/models",
     labelKey: "models",
-    label: "Models",
     icon: Cpu,
   },
-  { path: "/logs", labelKey: "logs", label: "Logs", icon: FileText },
-  { path: "/cron", labelKey: "cron", label: "Cron", icon: Clock },
-  { path: "/skills", labelKey: "skills", label: "Skills", icon: Package },
-  { path: "/plugins", labelKey: "plugins", label: "Plugins", icon: Puzzle },
-  { path: "/mcp", label: "MCP", icon: Plug },
-  { path: "/channels", label: "Channels", icon: Radio },
-  { path: "/webhooks", label: "Webhooks", icon: Webhook },
-  { path: "/pairing", label: "Pairing", icon: ShieldCheck },
-  { path: "/profiles", labelKey: "profiles", label: "Profiles", icon: Users },
-  { path: "/config", labelKey: "config", label: "Config", icon: Settings },
-  { path: "/env", labelKey: "keys", label: "Keys", icon: KeyRound },
-  { path: "/system", label: "System", icon: Wrench },
+  { path: "/logs", labelKey: "logs", icon: FileText },
+  { path: "/cron", labelKey: "cron", icon: Clock },
+  { path: "/skills", labelKey: "skills", icon: Package },
+  { path: "/plugins", labelKey: "plugins", icon: Puzzle },
+  { path: "/mcp", labelKey: "mcp", icon: Plug },
+  { path: "/channels", labelKey: "channels", icon: Radio },
+  { path: "/webhooks", labelKey: "webhooks", icon: Webhook },
+  { path: "/pairing", labelKey: "pairing", icon: ShieldCheck },
+  { path: "/profiles", labelKey: "profiles", icon: Users },
+  { path: "/config", labelKey: "config", icon: Settings },
+  { path: "/env", labelKey: "keys", icon: KeyRound },
+  { path: "/system", labelKey: "system", icon: Wrench },
   {
     path: "/docs",
     labelKey: "documentation",
-    label: "Documentation",
     icon: BookOpen,
   },
 ];
@@ -502,7 +498,8 @@ export default function App() {
           "bg-background-base",
         )}
         style={{
-          background: "var(--component-header-background)",
+          background:
+            "var(--component-header-background, var(--background-base))",
           borderImage: "var(--component-header-border-image)",
           clipPath: "var(--component-header-clip-path)",
         }}
@@ -514,12 +511,12 @@ export default function App() {
           aria-label={t.app.openNavigation}
           aria-expanded={mobileOpen}
           aria-controls="app-sidebar"
-          className="text-text-secondary hover:text-midground"
+          className="text-text-secondary hover:text-primary"
         >
           <Menu />
         </Button>
 
-        <Typography className="font-bold text-[0.95rem] leading-[0.95] tracking-[0.05em] text-midground">
+        <Typography className="font-bold text-[0.95rem] leading-[0.95] tracking-normal text-foreground">
           {t.app.brand}
         </Typography>
       </header>
@@ -531,7 +528,7 @@ export default function App() {
           onClick={closeMobile}
           className={cn(
             "lg:hidden fixed inset-0 z-40 p-0 block",
-            "bg-black/70",
+            "bg-foreground/35",
           )}
         />
       )}
@@ -555,7 +552,8 @@ export default function App() {
               collapsed && "lg:w-14",
             )}
             style={{
-              background: "var(--component-sidebar-background)",
+              background:
+                "var(--component-sidebar-background, var(--background-base))",
               clipPath: "var(--component-sidebar-clip-path)",
               borderImage: "var(--component-sidebar-border-image)",
             }}
@@ -575,7 +573,7 @@ export default function App() {
               >
                 <PluginSlot name="header-left" />
 
-                <Typography className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground uppercase">
+                <Typography className="font-bold text-[1.125rem] leading-[0.95] tracking-normal text-foreground uppercase">
                   Hermes
                   <br />
                   Agent
@@ -587,7 +585,7 @@ export default function App() {
                 size="icon"
                 onClick={closeMobile}
                 aria-label={t.app.closeNavigation}
-                className="lg:hidden text-text-secondary hover:text-midground"
+                className="lg:hidden text-text-secondary hover:text-primary"
               >
                 <X />
               </Button>
@@ -599,7 +597,7 @@ export default function App() {
                 aria-label={
                   collapsed ? t.common.expand : t.common.collapse
                 }
-                className="hidden lg:flex text-text-secondary hover:text-midground"
+                className="hidden lg:flex text-text-secondary hover:text-primary"
               >
                 {collapsed ? (
                   <PanelLeftOpen className="h-4 w-4" />
@@ -637,7 +635,7 @@ export default function App() {
                   <span
                     className={cn(
                       "px-5 pt-2.5 pb-1",
-                      "font-sans text-display text-xs tracking-[0.12em] text-text-tertiary",
+                      "font-sans text-display text-xs tracking-normal text-text-tertiary",
                       isDesktopCollapsed && "lg:hidden",
                     )}
                     id="hermes-sidebar-plugin-nav-heading"
@@ -688,7 +686,7 @@ export default function App() {
 
                 <SidebarIconWithTooltip
                   collapsed={isDesktopCollapsed}
-                  label={t.theme?.switchTheme ?? "Switch theme"}
+                  label={t.theme.switchTheme}
                   tooltipWarmRef={tooltipWarmRef}
                 >
                   <ThemeSwitcher collapsed={isDesktopCollapsed} dropUp />
@@ -718,7 +716,10 @@ export default function App() {
           <PageHeaderProvider pluginTabs={pluginTabMeta}>
             <div
               className={cn(
-                "relative z-2 flex min-w-0 min-h-0 flex-1 flex-col",
+                // Keep the content positioned for layout, but avoid creating
+                // a stacking context that traps page dialogs beneath the
+                // fixed sidebar.
+                "relative z-auto flex min-w-0 min-h-0 flex-1 flex-col",
                 "px-3 sm:px-6",
                 isChatRoute
                   ? "pb-0 pt-1 sm:pt-2 lg:pt-4"
@@ -761,7 +762,7 @@ export default function App() {
                       >
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Spinner />
-                          <span>Loading chat…</span>
+                          <span>{t.app.loadingChat}</span>
                         </div>
                       </div>
                     ) : null
@@ -816,9 +817,7 @@ function SidebarNavLink({
   const [hovered, setHovered] = useState(false);
   const [tooltipAnchor, setTooltipAnchor] = useState<HTMLElement | null>(null);
 
-  const navLabel = labelKey
-    ? ((t.app.nav as Record<string, string>)[labelKey] ?? label)
-    : label;
+  const navLabel = labelKey ? t.app.nav[labelKey] : (label ?? path);
   const showTooltip = (event: MouseEvent<HTMLElement> | FocusEvent<HTMLElement>) => {
     setHovered(true);
     setTooltipAnchor(event.currentTarget);
@@ -842,14 +841,14 @@ function SidebarNavLink({
         onBlur={collapsed ? hideTooltip : undefined}
         className={({ isActive }) =>
           cn(
-            "group/nav relative flex items-center gap-3",
+            "group/nav relative isolate flex items-center gap-3",
             "px-5 py-2.5",
-            "font-sans text-display uppercase text-sm tracking-[0.12em]",
+            "font-sans text-display uppercase text-sm tracking-normal",
             "whitespace-nowrap transition-colors cursor-pointer",
-            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground",
+            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
             isActive
-              ? "text-midground"
-              : "text-text-secondary hover:text-midground",
+              ? "text-primary"
+              : "text-text-secondary hover:text-primary",
           )
         }
         style={{
@@ -871,13 +870,13 @@ function SidebarNavLink({
 
             <span
               aria-hidden
-              className="absolute inset-y-0.5 left-1.5 right-1.5 bg-midground opacity-0 pointer-events-none transition-opacity duration-200 group-hover/nav:opacity-5"
+              className="absolute inset-y-0.5 left-1.5 right-1.5 -z-10 bg-accent opacity-0 pointer-events-none transition-opacity duration-200 group-hover/nav:opacity-100"
             />
 
             {isActive && (
               <span
                 aria-hidden
-                className="absolute left-0 top-0 bottom-0 w-px bg-midground"
+                className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary"
               />
             )}
           </>
@@ -897,7 +896,7 @@ function SidebarSystemActions({
   status,
   tooltipWarmRef,
 }: SidebarSystemActionsProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const navigate = useNavigate();
   const { activeAction, isBusy, isRunning, pendingAction, runAction } =
     useSystemActions();
@@ -935,14 +934,14 @@ function SidebarSystemActions({
     if (updateConfirmInfo?.behind && updateConfirmInfo.behind > 0) {
       const cmd = updateConfirmInfo.update_command;
       const n = updateConfirmInfo.behind;
-      return `This will run 'hermes update' (${cmd}) and pull ${n} new commit${n === 1 ? "" : "s"}. The gateway restarts when the update finishes; the current session keeps its prompt cache until then.`;
+      return formatMessage(t.systemPage.update.confirmBehind, {
+        command: cmd,
+        count: formatNumber(n, locale),
+      });
     }
     const cmd = updateConfirmInfo?.update_command ?? "hermes update";
-    return (
-      t.status.updateHermesConfirmMessage ??
-      `This will run 'hermes update' (${cmd}) and restart the gateway when it finishes.`
-    );
-  }, [t.status.updateHermesConfirmMessage, updateConfirmInfo]);
+    return formatMessage(t.systemPage.update.confirmRestart, { command: cmd });
+  }, [locale, t.systemPage.update, updateConfirmInfo]);
 
   const items: SystemActionItem[] = [
     {
@@ -1004,7 +1003,7 @@ function SidebarSystemActions({
       <span
         className={cn(
           "px-5 pt-0.5 pb-0.5",
-          "font-sans text-display text-xs tracking-[0.12em] text-text-tertiary",
+          "font-sans text-display text-xs tracking-normal text-text-tertiary",
           collapsed && "lg:hidden",
         )}
       >
@@ -1036,22 +1035,17 @@ function SidebarSystemActions({
     <ConfirmDialog
       cancelLabel={t.common.cancel}
       confirmLabel={t.status.restartGateway}
-      description={
-        t.status.restartGatewayConfirmMessage ??
-        "This restarts the Hermes gateway process. Connected channels and active sessions will reconnect afterward."
-      }
+      description={t.status.restartGatewayConfirmMessage}
       loading={pendingAction === "restart"}
       onCancel={() => setRestartConfirmOpen(false)}
       onConfirm={confirmRestart}
       open={restartConfirmOpen}
-      title={
-        t.status.restartGatewayConfirmTitle ?? `${t.status.restartGateway}?`
-      }
+      title={t.status.restartGatewayConfirmTitle}
     />
 
     <ConfirmDialog
       cancelLabel={t.common.cancel}
-      confirmLabel={t.status.updateHermesConfirmNow ?? "Update now"}
+      confirmLabel={t.status.updateHermesConfirmNow}
       description={
         updateConfirmChecking ? t.common.loading : updateConfirmDescription
       }
@@ -1059,7 +1053,7 @@ function SidebarSystemActions({
       onCancel={() => setUpdateConfirmOpen(false)}
       onConfirm={confirmUpdate}
       open={updateConfirmOpen}
-      title={t.status.updateHermesConfirmTitle ?? `${t.status.updateHermes}?`}
+      title={t.status.updateHermesConfirmTitle}
     />
     </>
   );
@@ -1102,14 +1096,14 @@ function SystemActionButton({
         onBlur={collapsed ? hideTooltip : undefined}
         type="button"
         className={cn(
-          "group/action relative flex w-full items-center gap-3",
+          "group/action relative isolate flex w-full items-center gap-3",
           "px-5 py-2.5",
-          "font-sans text-display text-xs tracking-[0.1em]",
+          "font-sans text-display text-xs tracking-normal",
           "whitespace-nowrap transition-colors cursor-pointer",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           busy
-            ? "text-midground"
-            : "text-text-secondary hover:text-midground",
+            ? "text-primary"
+            : "text-text-secondary hover:text-primary",
           "disabled:text-text-disabled disabled:cursor-not-allowed",
         )}
       >
@@ -1135,13 +1129,13 @@ function SystemActionButton({
 
         <span
           aria-hidden
-          className="absolute inset-y-0.5 left-1.5 right-1.5 bg-midground opacity-0 pointer-events-none transition-opacity duration-200 group-hover/action:opacity-5"
+          className="absolute inset-y-0.5 left-1.5 right-1.5 -z-10 bg-accent opacity-0 pointer-events-none transition-opacity duration-200 group-hover/action:opacity-100"
         />
 
         {busy && (
           <span
             aria-hidden
-            className="absolute left-0 top-0 bottom-0 w-px bg-midground"
+            className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary"
           />
         )}
       </button>
@@ -1173,7 +1167,7 @@ function SidebarIconWithTooltip({
   return (
     <div
       className={cn(
-        "relative w-fit",
+        "relative isolate w-fit",
         collapsed && "group/icon",
       )}
       onMouseEnter={collapsed ? showTooltip : undefined}
@@ -1184,7 +1178,7 @@ function SidebarIconWithTooltip({
       {collapsed && (
         <span
           aria-hidden
-          className="absolute inset-y-0 inset-x-[-0.375rem] bg-midground opacity-0 pointer-events-none transition-opacity duration-200 group-hover/icon:opacity-5 hidden lg:block"
+          className="absolute inset-y-0 inset-x-[-0.375rem] -z-10 bg-accent opacity-0 pointer-events-none transition-opacity duration-200 group-hover/icon:opacity-100 hidden lg:block"
         />
       )}
 
@@ -1211,7 +1205,7 @@ function GatewayDot({ collapsed, status, tooltipWarmRef }: GatewayDotProps) {
   let label: string;
 
   if (!status) {
-    color = "bg-midground/20";
+    color = "bg-border";
     label = t.status.gateway;
   } else {
     const gw = gatewayLine(status, t);
@@ -1278,7 +1272,7 @@ function SidebarTooltip({ anchor, label, warmRef }: SidebarTooltipProps) {
         "fixed z-[100] pointer-events-none",
         "px-2 py-1",
         "bg-background-base border border-current/20 shadow-lg",
-        "font-sans text-display text-xs tracking-[0.1em] text-midground uppercase",
+        "font-sans text-display text-xs tracking-normal text-foreground uppercase",
       )}
       style={{
         top: rect.top + rect.height / 2,
@@ -1304,8 +1298,8 @@ interface GatewayDotProps {
 
 interface NavItem {
   icon: ComponentType<{ className?: string }>;
-  label: string;
-  labelKey?: string;
+  label?: string;
+  labelKey?: keyof Translations["app"]["nav"];
   path: string;
 }
 
