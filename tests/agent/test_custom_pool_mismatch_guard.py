@@ -24,9 +24,10 @@ from agent.error_classifier import FailoverReason
 FIREWORKS_URL = "https://api.fireworks.ai/inference/v1"
 
 
-def _agent(provider, base_url, pool_provider):
+def _agent(provider, base_url, pool_provider, requested_provider=None):
     agent = MagicMock()
     agent.provider = provider
+    agent.requested_provider = requested_provider or provider
     agent.base_url = base_url
     pool = MagicMock()
     pool.provider = pool_provider
@@ -38,14 +39,19 @@ class TestCustomPoolMismatchGuard:
     def test_matching_custom_pool_reaches_recovery(self):
         """agent=custom + pool=custom:<name> whose base_url matches must NOT
         be treated as a cross-provider mismatch."""
-        agent, pool = _agent("custom", FIREWORKS_URL, "custom:fireworks")
+        agent, pool = _agent(
+            "custom",
+            FIREWORKS_URL,
+            "custom:fireworks",
+            requested_provider="custom:fireworks",
+        )
         # Rate-limit path deterministically calls pool.current() once past
         # the guard (the auth path consults agent._is_entitlement_failure,
         # which a MagicMock would answer truthily).
         pool.current.return_value = None
         with patch(
-            "agent.credential_pool.get_custom_provider_pool_key",
-            return_value="custom:fireworks",
+            "agent.credential_pool._get_custom_provider_config",
+            return_value={"name": "Fireworks", "base_url": FIREWORKS_URL},
         ):
             recover_with_credential_pool(
                 agent,
@@ -62,18 +68,17 @@ class TestCustomPoolMismatchGuard:
         """agent=custom pointed at a DIFFERENT endpoint than the pool's
         custom provider must still skip pool mutation."""
         agent, pool = _agent(
-            "custom", "https://other-endpoint.example/v1", "custom:fireworks"
+            "custom",
+            "https://other-endpoint.example/v1",
+            "custom:fireworks",
+            requested_provider="custom:other",
         )
-        with patch(
-            "agent.credential_pool.get_custom_provider_pool_key",
-            return_value="custom:other",
-        ):
-            recovered, _ = recover_with_credential_pool(
-                agent,
-                status_code=401,
-                has_retried_429=False,
-                classified_reason=FailoverReason.auth,
-            )
+        recovered, _ = recover_with_credential_pool(
+            agent,
+            status_code=401,
+            has_retried_429=False,
+            classified_reason=FailoverReason.auth,
+        )
         assert recovered is False
         assert not pool.method_calls
 

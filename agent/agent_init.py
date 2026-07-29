@@ -661,6 +661,7 @@ def init_agent(
                 credential_pool,
                 agent.provider,
                 base_url=agent.base_url,
+                requested_provider=agent.requested_provider,
             ):
                 agent._credential_pool = None
         except Exception:

@@ -32,6 +32,86 @@ def config_home(tmp_path, monkeypatch):
 class TestCustomProviderModelSwitch:
     """Ensure _model_flow_named_custom always probes and shows menu."""
 
+    def test_same_endpoint_distinct_named_configs_keep_keys_and_models_isolated(
+        self,
+        config_home,
+    ):
+        """One relay URL may host model-specific keys under distinct names.
+
+        Exercise the real CLI persistence and runtime-resolution chain. The
+        second setup must neither overwrite the first provider row nor reuse
+        its secret slot merely because both rows share a base URL.
+        """
+        import yaml
+
+        from hermes_cli.config import custom_endpoint_key_env, get_env_value
+        from hermes_cli.main import _model_flow_custom
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        relay_url = "https://relay.example.test/v1"
+        prompt_answers = iter(
+            [
+                relay_url,
+                "",  # accept the single discovered model
+                "",  # auto-detect context length
+                "Relay Model A",
+                relay_url,
+                "",
+                "",
+                "Relay Model B",
+            ]
+        )
+        secrets = iter(["sk-relay-a", "sk-relay-b"])
+
+        def _probe(api_key, _base_url):
+            return {
+                "models": [
+                    "model-a" if api_key == "sk-relay-a" else "model-b"
+                ],
+                "used_fallback": False,
+                "probed_url": f"{relay_url}/models",
+            }
+
+        with patch("hermes_cli.models.probe_api_models", side_effect=_probe), \
+             patch(
+                 "hermes_cli.secret_prompt.masked_secret_prompt",
+                 side_effect=lambda *_args, **_kwargs: next(secrets),
+             ), \
+             patch(
+                 "hermes_cli.main._prompt_custom_api_mode_selection",
+                 return_value="chat_completions",
+             ), \
+             patch("builtins.input", side_effect=lambda *_args: next(prompt_answers)), \
+             patch("builtins.print"):
+            _model_flow_custom({})
+            _model_flow_custom({})
+
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        entries = config.get("custom_providers") or []
+        assert [(entry["name"], entry["model"]) for entry in entries] == [
+            ("Relay Model A", "model-a"),
+            ("Relay Model B", "model-b"),
+        ]
+
+        key_env_a = custom_endpoint_key_env("Relay Model A")
+        key_env_b = custom_endpoint_key_env("Relay Model B")
+        assert key_env_a != key_env_b
+        assert entries[0]["key_env"] == key_env_a
+        assert entries[1]["key_env"] == key_env_b
+        assert get_env_value(key_env_a) == "sk-relay-a"
+        assert get_env_value(key_env_b) == "sk-relay-b"
+
+        runtime_a = resolve_runtime_provider(requested="custom:relay-model-a")
+        runtime_b = resolve_runtime_provider(requested="custom:relay-model-b")
+        assert (runtime_a["api_key"], runtime_a["model"]) == (
+            "sk-relay-a",
+            "model-a",
+        )
+        assert (runtime_b["api_key"], runtime_b["model"]) == (
+            "sk-relay-b",
+            "model-b",
+        )
+
     def test_custom_endpoint_switch_prunes_stale_model_config_pool_entry(
         self,
         config_home,

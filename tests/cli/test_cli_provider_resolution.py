@@ -939,7 +939,7 @@ def test_save_custom_provider_uses_provided_name(monkeypatch, tmp_path):
     assert saved_name == "Ollama"
 
 
-def test_save_custom_provider_returns_existing_name_when_url_matches(monkeypatch):
+def test_save_custom_provider_keeps_distinct_names_when_url_matches(monkeypatch):
     from hermes_cli.main import _save_custom_provider
 
     existing = {
@@ -951,14 +951,58 @@ def test_save_custom_provider_returns_existing_name_when_url_matches(monkeypatch
         ]
     }
     monkeypatch.setattr("hermes_cli.config.load_config", lambda: existing)
-    monkeypatch.setattr("hermes_cli.config.save_config", lambda cfg: None)
+    saved = {}
+    monkeypatch.setattr(
+        "hermes_cli.config.save_config",
+        lambda cfg: saved.update(cfg),
+    )
 
     saved_name = _save_custom_provider(
         "https://proxy.example.com/v1/",
         name="Replacement Label",
     )
 
-    assert saved_name == "Canonical Endpoint"
+    assert saved_name == "Replacement Label"
+    assert [entry["name"] for entry in saved["custom_providers"]] == [
+        "Canonical Endpoint",
+        "Replacement Label",
+    ]
+
+
+def test_save_custom_provider_same_name_updates_url_model_and_inline_key(monkeypatch):
+    from hermes_cli.main import _save_custom_provider
+
+    existing = {
+        "custom_providers": [
+            {
+                "name": "Relay A",
+                "base_url": "https://old-relay.example.com/v1",
+                "key_env": "HERMES_CUSTOM_RELAY_A_API_KEY",
+                "model": "old-model",
+            }
+        ]
+    }
+    saved = {}
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: existing)
+    monkeypatch.setattr(
+        "hermes_cli.config.save_config",
+        lambda cfg: saved.update(cfg),
+    )
+
+    saved_name = _save_custom_provider(
+        "https://new-relay.example.com/v1",
+        api_key="sk-rotated",
+        model="new-model",
+        name="relay-a",
+    )
+
+    assert saved_name == "Relay A"
+    assert len(saved["custom_providers"]) == 1
+    entry = saved["custom_providers"][0]
+    assert entry["base_url"] == "https://new-relay.example.com/v1"
+    assert entry["model"] == "new-model"
+    assert entry["api_key"] == "sk-rotated"
+    assert "key_env" not in entry
 
 
 def test_save_custom_provider_names_legacy_unnamed_url_match(monkeypatch):

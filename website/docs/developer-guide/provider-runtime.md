@@ -71,6 +71,13 @@ Current provider families include (see `plugins/model-providers/` for the comple
 - Custom (`provider: custom`) — first-class provider for any OpenAI-compatible endpoint
 - Named custom providers (`custom_providers` list in config.yaml)
 
+For named custom providers, the durable runtime identity is the provider name
+(`custom:<normalized-name>`), not `base_url`. Multiple entries may share a URL.
+The compatibility layer also maps a `providers:` dictionary key and its
+optional display `name` to the same canonical custom credential-pool identity.
+URL-only reverse lookup is retained only for bare/legacy custom runtimes that
+do not carry a named identity.
+
 ## Output of runtime resolution
 
 The runtime resolver returns data such as:
@@ -100,6 +107,12 @@ Each provider's API key is scoped to its own base URL:
 
 - `OPENROUTER_API_KEY` is only sent to `openrouter.ai` endpoints
 - `OPENAI_API_KEY` is used for custom endpoints and as a fallback
+
+Named custom pools add a second boundary: the requested provider identity must
+resolve to the same configured pool name, and that config row's URL must match
+the live runtime URL. Agent initialization, 401/429 recovery, and cross-turn
+fallback restoration all apply this invariant, preventing two configurations
+on one relay from selecting each other's credentials.
 
 Hermes also distinguishes between:
 

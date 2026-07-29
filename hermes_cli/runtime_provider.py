@@ -1878,6 +1878,7 @@ def resolve_runtime_provider(
                     or getattr(entry, "base_url", None)
                     or ""
                 ),
+                requested_provider=requested_provider,
             )
         ):
             return _resolve_runtime_from_pool_entry(

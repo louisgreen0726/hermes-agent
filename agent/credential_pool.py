@@ -415,12 +415,34 @@ def _iter_custom_providers(config: Optional[dict] = None):
         yield _normalize_custom_pool_name(name), entry
 
 
+def _resolve_custom_provider_pool_identity(
+    provider_name: Optional[str],
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Map a runtime custom-provider id to its canonical pool and config row."""
+    requested_name = str(provider_name or "").strip().lower()
+    if requested_name.startswith(CUSTOM_POOL_PREFIX):
+        requested_name = requested_name[len(CUSTOM_POOL_PREFIX):]
+    if not requested_name:
+        return None
+    requested_name = _normalize_custom_pool_name(requested_name)
+
+    for norm_name, entry in _iter_custom_providers():
+        runtime_ids = {norm_name}
+        provider_key = str(entry.get("provider_key") or "").strip()
+        if provider_key:
+            runtime_ids.add(_normalize_custom_pool_name(provider_key))
+        if requested_name in runtime_ids:
+            return f"{CUSTOM_POOL_PREFIX}{norm_name}", entry
+    return None
+
+
 def get_custom_provider_pool_key(base_url: Optional[str], provider_name: Optional[str] = None) -> Optional[str]:
     """Look up the custom_providers list in config.yaml and return 'custom:<name>' for a matching base_url.
 
-    When provider_name is given, prefer matching by name first (solving the case where
-    multiple custom providers share the same base_url but have different API keys).
-    Falls back to base_url matching when no name match is found.
+    When provider_name is given, require the matching named entry to own the
+    supplied URL (solving the case where multiple custom providers share one
+    URL but have different API keys). Falls back to URL-only matching when no
+    configured name matches, for legacy callers without a durable identity.
 
     Returns None if no match is found.
     """
@@ -428,14 +450,18 @@ def get_custom_provider_pool_key(base_url: Optional[str], provider_name: Optiona
         return None
     normalized_url = base_url.strip().rstrip("/")
 
-    # When a provider name is given, try to match by name first.
-    # This fixes the P1 bug where two custom providers sharing the same
-    # base_url always resolve to the first one's credentials.
+    # A matched name is authoritative, including when its URL differs. Do not
+    # then fall through to some other provider that happens to own the runtime
+    # URL: that would send the named provider's pool credential to the wrong
+    # endpoint when an explicit base_url override is present.
     if provider_name:
-        normalized_name = _normalize_custom_pool_name(provider_name)
-        for norm_name, entry in _iter_custom_providers():
-            if norm_name == normalized_name:
-                return f"{CUSTOM_POOL_PREFIX}{norm_name}"
+        resolved = _resolve_custom_provider_pool_identity(provider_name)
+        if resolved is not None:
+            pool_key, entry = resolved
+            entry_url = str(entry.get("base_url") or "").strip().rstrip("/")
+            if entry_url and entry_url == normalized_url:
+                return pool_key
+            return None
 
     # Fall back to base_url matching (original behavior)
     for norm_name, entry in _iter_custom_providers():
@@ -488,12 +514,14 @@ def credential_pool_matches_provider(
     provider: Optional[str],
     *,
     base_url: Optional[str] = None,
+    requested_provider: Optional[str] = None,
 ) -> bool:
     """Return whether a pool belongs to the requested runtime provider.
 
     Named custom endpoints intentionally use two identities: the live agent is
     ``custom`` while its pool is keyed ``custom:<name>``. Accept that pair only
-    when the runtime base URL resolves to the exact same custom pool key.
+    when the requested name and runtime URL identify that exact configured
+    endpoint. Generic/legacy custom runtimes still fall back to URL lookup.
     Empty string identities fail closed. Legacy pool adapters without a
     ``provider`` attribute remain compatible; production pools are scoped.
     """
@@ -514,6 +542,34 @@ def credential_pool_matches_provider(
         return True
     if provider_norm != "custom" or not pool_provider.startswith(CUSTOM_POOL_PREFIX):
         return False
+
+    requested_norm = str(requested_provider or "").strip().lower()
+    requested_pool = None
+    requested_entry = None
+    if requested_norm not in {"", "auto", "custom"}:
+        resolved = _resolve_custom_provider_pool_identity(requested_norm)
+        if resolved is not None:
+            requested_pool, requested_entry = resolved
+        elif requested_norm.startswith(CUSTOM_POOL_PREFIX):
+            requested_name = requested_norm[len(CUSTOM_POOL_PREFIX):]
+            if requested_name:
+                requested_pool = (
+                    f"{CUSTOM_POOL_PREFIX}"
+                    f"{_normalize_custom_pool_name(requested_name)}"
+                )
+
+    if requested_pool is not None:
+        if requested_pool != pool_provider:
+            return False
+        entry = requested_entry or _get_custom_provider_config(requested_pool)
+        configured_url = (
+            str(entry.get("base_url") or "").strip().rstrip("/")
+            if isinstance(entry, dict)
+            else ""
+        )
+        runtime_url = str(base_url or "").strip().rstrip("/")
+        return bool(configured_url and runtime_url and configured_url == runtime_url)
+
     try:
         matched_pool = get_custom_provider_pool_key(base_url or "")
     except Exception:

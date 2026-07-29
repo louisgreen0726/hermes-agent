@@ -7078,16 +7078,17 @@ def _apply_model_assignment_sync(
         # (_save_custom_provider). Without this the endpoint only lives in
         # ``model.*`` and the picker has no proper ready row for it — the
         # GUI then surfaces a "needs setup" dead-end on the bare ``custom``
-        # provider. Dedups by base_url, so re-saving is idempotent.
+        # provider. This compatibility path deliberately omits a name so it
+        # keeps URL-based idempotence; explicit names are independent custom
+        # provider identities and may legitimately share the same URL.
         if provider.strip().lower() in {"custom", "local"} and base_url:
             try:
-                from hermes_cli.main import _auto_provider_name, _save_custom_provider
+                from hermes_cli.main import _save_custom_provider
 
                 _save_custom_provider(
                     base_url,
                     api_key,
                     model,
-                    name=_auto_provider_name(base_url),
                 )
             except Exception:
                 # Never block the assignment on the bookkeeping write —

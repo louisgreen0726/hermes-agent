@@ -1005,15 +1005,12 @@ def _model_flow_custom(config):
             print(f"Invalid context length: {context_length_str} — will auto-detect.")
             context_length = None
 
-    # The key goes to .env and config.yaml only references it (#69449). Keyed
-    # on host:port so two servers on one machine keep separate credentials.
+    # The key goes to .env and config.yaml only references it (#69449). The
+    # named provider is the identity, so one relay URL can host independent
+    # model/key configurations without sharing a secret slot.
     custom_key_env = ""
     if effective_key:
-        _parsed = urllib.parse.urlparse(effective_url)
-        _identity = _parsed.hostname or ""
-        if _parsed.port:
-            _identity = f"{_identity}_{_parsed.port}"
-        custom_key_env = custom_endpoint_key_env(_identity)
+        custom_key_env = custom_endpoint_key_env(display_name)
         save_env_value(custom_key_env, effective_key)
         print(f"  API key saved to .env as {custom_key_env}")
 
@@ -1640,6 +1637,7 @@ def _model_flow_named_custom(config, provider_info):
             model_name,
             name=name,
             api_mode=api_mode,
+            key_env=key_env,
         )
 
     print(f"\n✅ Model set to: {model_name}")

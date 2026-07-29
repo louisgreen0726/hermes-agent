@@ -2308,7 +2308,13 @@ def test_get_custom_provider_pool_key_prefers_name_over_base_url(tmp_path, monke
     assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="provider-b") == "custom:provider-b"
     assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="provider-a") == "custom:provider-a"
 
-    # Name match with non-matching base_url still works via fallback
+    # A known name never borrows another endpoint's pool under a URL override.
+    assert get_custom_provider_pool_key(
+        "https://other.example.test/v1",
+        provider_name="provider-b",
+    ) is None
+
+    # An unknown name still uses the legacy URL fallback.
     assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="nonexistent") == "custom:provider-a"
 
     # Empty provider_name is same as None (backward compatible)

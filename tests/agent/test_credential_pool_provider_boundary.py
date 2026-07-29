@@ -26,6 +26,90 @@ def test_custom_pool_match_is_scoped_by_endpoint():
         )
 
 
+def test_named_custom_pool_match_is_scoped_by_name_and_url(tmp_path, monkeypatch):
+    import yaml
+
+    home = tmp_path / "hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    relay_url = "https://relay.example.test/v1"
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "custom_providers": [
+                    {"name": "Relay A", "base_url": relay_url},
+                    {"name": "Relay B", "base_url": relay_url},
+                ]
+            }
+        )
+    )
+
+    assert credential_pool_matches_provider(
+        "custom:relay-b",
+        "custom",
+        base_url=relay_url,
+        requested_provider="custom:relay-b",
+    )
+    assert not credential_pool_matches_provider(
+        "custom:relay-a",
+        "custom",
+        base_url=relay_url,
+        requested_provider="custom:relay-b",
+    )
+    assert not credential_pool_matches_provider(
+        "custom:relay-b",
+        "custom",
+        base_url="https://other.example.test/v1",
+        requested_provider="custom:relay-b",
+    )
+
+
+def test_named_custom_pool_maps_provider_key_to_display_name_pool(
+    tmp_path, monkeypatch
+):
+    import yaml
+
+    from agent.credential_pool import get_custom_provider_pool_key
+
+    home = tmp_path / "hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    relay_url = "https://relay.example.test/v1"
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "relay-a-id": {
+                        "name": "Relay A",
+                        "base_url": relay_url,
+                    },
+                    "relay-b-id": {
+                        "name": "Relay B",
+                        "base_url": relay_url,
+                    },
+                }
+            }
+        )
+    )
+
+    assert get_custom_provider_pool_key(
+        relay_url,
+        provider_name="relay-b-id",
+    ) == "custom:relay-b"
+    assert credential_pool_matches_provider(
+        "custom:relay-b",
+        "custom",
+        base_url=relay_url,
+        requested_provider="custom:relay-b-id",
+    )
+    assert not credential_pool_matches_provider(
+        "custom:relay-a",
+        "custom",
+        base_url=relay_url,
+        requested_provider="custom:relay-b-id",
+    )
+
+
 def test_runtime_ignores_pool_loaded_for_different_provider(monkeypatch):
     entry = SimpleNamespace(
         provider="openai-codex",

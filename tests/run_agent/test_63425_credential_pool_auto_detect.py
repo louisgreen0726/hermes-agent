@@ -21,6 +21,70 @@ def _mock_client(api_key="test-key", base_url="https://api.anthropic.com"):
 class TestCredentialPoolPreservedOnAutoDetect:
     """Issue #63425: credential pool should survive provider auto-detection."""
 
+    def test_named_custom_pool_preserved_when_another_provider_shares_url(
+        self, tmp_path, monkeypatch
+    ):
+        """A named custom runtime must validate against its own config row."""
+        import yaml
+
+        from agent.agent_init import init_agent
+        from run_agent import AIAgent
+
+        home = tmp_path / "hermes"
+        home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        relay_url = "https://relay.example.test/v1"
+        (home / "config.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "custom_providers": [
+                        {"name": "Relay A", "base_url": relay_url},
+                        {"name": "Relay B", "base_url": relay_url},
+                    ]
+                }
+            )
+        )
+
+        agent = object.__new__(AIAgent)
+        agent._base_url = ""
+        agent._base_url_lower = ""
+        agent._base_url_hostname = ""
+        pool = SimpleNamespace(provider="custom:relay-b")
+
+        with patch(
+            "agent.auxiliary_client.resolve_provider_client",
+            return_value=(_mock_client("sk-relay-b", relay_url), None),
+        ), patch(
+            "run_agent.get_tool_definitions", return_value=[]
+        ), patch(
+            "run_agent.OpenAI", return_value=MagicMock()
+        ), patch(
+            "agent.azure_identity_adapter.is_token_provider", return_value=False
+        ), patch(
+            "hermes_cli.model_normalize.normalize_model_for_provider",
+            return_value="model-b",
+        ), patch(
+            "agent.iteration_budget.IterationBudget"
+        ), patch(
+            "hermes_cli.config.cfg_get", return_value=None
+        ):
+            init_agent(
+                agent,
+                base_url=relay_url,
+                api_key="sk-relay-b",
+                provider="custom",
+                requested_provider="custom:relay-b",
+                api_mode="chat_completions",
+                model="model-b",
+                credential_pool=pool,
+                skip_context_files=True,
+                skip_memory=True,
+                quiet_mode=True,
+            )
+
+        assert agent.requested_provider == "custom:relay-b"
+        assert agent._credential_pool is pool
+
     def test_anthropic_pool_preserved_with_url_auto_detect(self):
         """When provider=None and base_url=api.anthropic.com, the passed
         credential_pool should remain attached after auto-detection."""

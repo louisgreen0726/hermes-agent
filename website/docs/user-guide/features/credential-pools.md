@@ -153,6 +153,17 @@ Custom OpenAI-compatible endpoints (Together.ai, RunPod, local servers) get thei
 
 When you set up a custom endpoint via `hermes model`, it auto-generates a name like "Together.ai" or "Local (localhost:8080)". This name becomes the pool key.
 
+The name is authoritative; the URL is not required to be unique. If two named
+providers point to the same relay URL, `custom:relay-gpt` and
+`custom:relay-claude` remain separate pools and Hermes validates both the
+requested name and configured URL before using either pool. The newer
+`providers:` mapping follows the same rule even when its mapping key differs
+from the display name.
+
+Use separate provider names when a relay assigns different keys to different
+models or accounts. Use multiple credentials inside one pool only when the keys
+are interchangeable and should rotate for the same named provider.
+
 ```bash
 # After setting up a custom endpoint via hermes model:
 hermes auth list

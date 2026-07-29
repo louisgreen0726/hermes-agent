@@ -11,6 +11,7 @@ exhausting remaining entries and falling through to cross-provider fallback.
 import json
 import logging
 import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -67,6 +68,7 @@ class TestRestorePrimaryPoolReselect:
         agent = AIAgent.__new__(AIAgent)
         agent.model = "gpt-5.5"
         agent.provider = "openai-codex"
+        agent.requested_provider = "openai-codex"
         agent.base_url = "https://chatgpt.com/backend-api/codex"
         agent.api_mode = "codex_responses"
         agent.api_key = "original-key-entry-1"
@@ -87,6 +89,7 @@ class TestRestorePrimaryPoolReselect:
         agent._primary_runtime = {
             "model": "gpt-5.5",
             "provider": "openai-codex",
+            "requested_provider": "openai-codex",
             "base_url": "https://chatgpt.com/backend-api/codex",
             "api_mode": "codex_responses",
             "api_key": "original-key-entry-1",
@@ -220,3 +223,67 @@ class TestRestorePrimaryPoolReselect:
         assert result is True
         assert "custom-endpoint.example.com" in agent.base_url
         assert "custom-endpoint.example.com" in agent._client_kwargs["base_url"]
+
+    def test_restore_reloads_exact_named_custom_pool_for_shared_url(
+        self, tmp_path, monkeypatch
+    ):
+        """Fallback recovery must not bind the first pool sharing the URL."""
+        import yaml
+
+        home = tmp_path / "hermes"
+        home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        relay_url = "https://relay.example.test/v1"
+        (home / "config.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "custom_providers": [
+                        {"name": "Relay A", "base_url": relay_url},
+                        {"name": "Relay B", "base_url": relay_url},
+                    ]
+                }
+            )
+        )
+
+        wrong_pool = MagicMock()
+        wrong_pool.provider = "custom:relay-a"
+        right_entry = SimpleNamespace(
+            provider="custom:relay-b",
+            id="relay-b-key",
+            label="Relay B",
+            runtime_api_key="sk-relay-b",
+            access_token="sk-relay-b",
+            base_url=relay_url,
+        )
+        right_pool = MagicMock()
+        right_pool.provider = "custom:relay-b"
+        right_pool.has_available.return_value = True
+        right_pool.select.return_value = right_entry
+
+        agent = self._make_agent(wrong_pool)
+        agent._primary_runtime.update(
+            {
+                "model": "model-b",
+                "provider": "custom",
+                "requested_provider": "custom:relay-b",
+                "base_url": relay_url,
+                "api_mode": "chat_completions",
+                "api_key": "sk-relay-b",
+                "client_kwargs": {
+                    "api_key": "sk-relay-b",
+                    "base_url": relay_url,
+                },
+            }
+        )
+        agent._swap_credential = MagicMock()
+
+        with patch(
+            "agent.credential_pool.load_pool",
+            return_value=right_pool,
+        ) as load_pool:
+            result = agent._restore_primary_runtime()
+
+        assert result is True
+        load_pool.assert_called_once_with("custom:relay-b")
+        assert agent._credential_pool is right_pool
+        agent._swap_credential.assert_called_once_with(right_entry)

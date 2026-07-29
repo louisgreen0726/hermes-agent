@@ -8308,7 +8308,7 @@ def custom_endpoint_key_env(identity: str) -> str:
     """Env var name holding a custom endpoint's API key.
 
     ``identity`` is whatever names the endpoint on the calling path — the
-    Desktop panel's endpoint id, or ``host:port`` for the CLI setup flow.
+    Desktop panel's endpoint id or the CLI provider's display name.
     Two properties matter:
 
     - It keys off the endpoint's own identity, not just its hostname, so two

@@ -1213,6 +1213,52 @@ custom_providers:
     api_mode: anthropic_messages  # for Anthropic-compatible proxies
 ```
 
+:::info Provider names are the identity
+Named custom providers are identified by `name`, not by `base_url`. Two entries
+may therefore use the same relay URL while keeping different API keys, models,
+API modes, and credential pools. Saving the same name again edits that provider;
+saving a different name creates an independent provider even when the URL is
+identical.
+
+When `hermes model` asks for a **Display name**, use a distinct name for each
+relay account or model-specific key. Hermes stores each entered key in its own
+`.env` slot and keeps only the `key_env` reference in `config.yaml`.
+:::
+
+For example, one relay can expose GPT and Claude under separate keys:
+
+```yaml
+# ~/.hermes/config.yaml
+custom_providers:
+  - name: relay-gpt
+    base_url: https://relay.example.com/v1
+    key_env: HERMES_CUSTOM_RELAY_GPT_API_KEY
+    model: gpt-5.4
+    api_mode: codex_responses
+  - name: relay-claude
+    base_url: https://relay.example.com/v1
+    key_env: HERMES_CUSTOM_RELAY_CLAUDE_API_KEY
+    model: claude-opus-4-6
+    api_mode: anthropic_messages
+
+model:
+  provider: custom:relay-gpt
+  default: gpt-5.4
+```
+
+```bash
+# ~/.hermes/.env
+HERMES_CUSTOM_RELAY_GPT_API_KEY=sk-relay-gpt
+HERMES_CUSTOM_RELAY_CLAUDE_API_KEY=sk-relay-claude
+```
+
+Switch between the isolated configurations by name:
+
+```text
+/model custom:relay-gpt:gpt-5.4
+/model custom:relay-claude:claude-opus-4-6
+```
+
 Some OpenAI-compatible endpoints need provider-specific request body fields. Add an `extra_body` map to the matching custom provider and Hermes will merge it into each chat-completions request for that endpoint:
 
 ```yaml
