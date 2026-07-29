@@ -1,6 +1,7 @@
 # Louis Hermes Agent
 
-This repository is the production source for the Louis distribution of Hermes Agent.
+This repository is the production source for Louis Hermes Agent, an
+independently maintained derivative of Hermes Agent.
 
 ## Identity
 
@@ -8,9 +9,13 @@ This repository is the production source for the Louis distribution of Hermes Ag
 - Release branch: `main`
 - User-facing version: `Louis-0.19.0.4`
 - Python package version: `0.19.0+Louis.4`
-- Upstream project: `https://github.com/NousResearch/hermes-agent`
+- Source project: `https://github.com/NousResearch/hermes-agent`
 
-The project is based on Hermes Agent by Nous Research and remains distributed under the MIT License. It is an independently maintained fork and is not an official Nous Research release.
+The independent Louis line began from Nous Research Hermes Agent commit
+`41f2196c530b3359d9a7fc9c7bd41e9ddd7882c5` and remains distributed under the
+MIT License. GitHub retains the fork-network relationship for provenance, but
+Louis has its own roadmap, release process, production branch, and update
+source. It is not an official Nous Research release.
 
 ## Current channel
 
@@ -77,10 +82,13 @@ To add a custom endpoint interactively:
 4. Restart the Gateway when the running messaging service must pick up the new
    default configuration.
 
-Store one provider per endpoint. A model ID such as `gpt-5.6-sol` must remain a
-model ID; do not turn it into a provider name such as `Louis/gpt-5.6-sol`.
-When an endpoint exposes multiple models, select the saved provider again or
-refresh the model catalog instead of creating another provider record. API
+Use one provider name per distinct credential and routing identity. Different
+named providers may share an endpoint when a relay assigns different API keys,
+models, or API modes; their credentials and runtime pools remain isolated.
+Reusing the same provider name edits that configuration. Multiple credentials
+inside one provider pool are appropriate only when they are interchangeable
+for that same named provider. A model ID such as `gpt-5.6-sol` must remain a
+model ID; do not turn it into a provider name such as `Louis/gpt-5.6-sol`. API
 keys entered by this flow are stored in `.env`, while `config.yaml` retains an
 environment reference.
 
@@ -112,6 +120,18 @@ healthy merely because no Git update is available.
 The gateway launches updates in an independent transient user service so the updater survives the intentional Gateway stop/restart window. Progress and the final exit code are delivered through durable marker files.
 
 Do not use `git pull upstream main` on a production checkout.
+
+## Documentation policy
+
+The root project overview is maintained in exactly two language editions:
+`README.md` (English) and `README.zh-CN.md` (Simplified Chinese). Their facts,
+versions, commands, warnings, and project status must remain aligned.
+
+Before every commit, contributors and coding agents review documentation impact
+and update all affected project, release, user, reference, and developer docs in
+the same change. Pure internal or test-only changes may require no documentation
+edit, but the impact review is still mandatory. The detailed checklist lives in
+`AGENTS.md`.
 
 ## Release notes
 

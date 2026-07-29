@@ -1,17 +1,34 @@
-# Hermes Agent - Development Guide
+# Louis Hermes Agent - Development Guide
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.
 
 **Never give up on the right solution.**
 
-## What Hermes Is
+## Project Identity and Instruction Scope
 
-Hermes is a personal AI agent that runs the same agent core across a CLI, a
-messaging gateway (Telegram, Discord, Slack, and ~20 other platforms), a TUI,
-and an Electron desktop app. It learns across sessions (memory + skills),
-delegates to subagents, runs scheduled jobs, and drives a real terminal and
-browser. It is extended primarily through **plugins and skills**, not by
-growing the core.
+Louis Hermes Agent is an independently maintained derivative of
+[Nous Research's Hermes Agent](https://github.com/NousResearch/hermes-agent).
+It preserves upstream attribution and the MIT license, but its releases,
+roadmap, update source, and production branch are maintained by the Louis
+project. It is not an official Nous Research release.
+
+- `origin/main` is the Louis production and automatic-update source.
+- Upstream changes are reviewed and adopted selectively; never synchronize
+  upstream directly into production as a routine update step.
+- [`LOUIS.md`](LOUIS.md) is authoritative for Louis project and release policy.
+- [`README.md`](README.md) and [`README.zh-CN.md`](README.zh-CN.md) are the only
+  root README language editions and must remain aligned.
+- More specific nested `AGENTS.md` files add or override rules for their
+  subtree. In particular, read `apps/desktop/AGENTS.md` for Desktop work.
+
+## What Louis Hermes Agent Is
+
+Louis Hermes Agent is a personal AI agent that runs the same agent core across
+a CLI, a messaging gateway (Telegram, Discord, Slack, and ~20 other
+platforms), a TUI, and an Electron desktop app. It learns across sessions
+(memory + skills), delegates to subagents, runs scheduled jobs, and drives a
+real terminal and browser. It is extended primarily through **plugins and
+skills**, not by growing the core.
 
 Two properties shape almost every design decision and are the lens for
 reviewing any change:
@@ -25,6 +42,50 @@ reviewing any change:
   tool we add is sent on every API call, so the bar for a new *core* tool is
   high. Most new capability should arrive as a CLI command + skill, a
   service-gated tool, or a plugin — not as core surface.
+
+## Commit and Documentation Synchronization
+
+Documentation impact is part of implementation, not a cleanup task after the
+code is finished. As soon as a change affects behavior, configuration,
+installation, project status, architecture, or a user workflow, add the
+corresponding documentation work to the active plan and keep it in the same
+change set.
+
+Before creating **every commit**, perform a documentation impact review even
+when the correct result is that no documentation file needs to change:
+
+1. Inspect the complete intended commit with `git diff` and
+   `git diff --cached`. Classify changes that affect users, operators,
+   contributors, release state, configuration, or runtime contracts.
+2. Check every applicable documentation surface below and update all affected
+   files in the same commit:
+
+   | Surface | Update when |
+   | --- | --- |
+   | `README.md` + `README.zh-CN.md` | Project identity, status, headline capabilities, installation, update flow, or support links change. Keep both languages semantically aligned. |
+   | `LOUIS.md` | Louis governance, release policy, update boundaries, management workflow, or carried capabilities change. |
+   | `LOUIS_RELEASE_NOTES.md` | A versioned baseline, release-note index, or pending-release structure changes. |
+   | `docs/releases/LOUIS_UNRELEASED.md` | User-visible fixes, features, compatibility changes, migrations, provider/runtime behavior, installation, or update behavior change. |
+   | `website/docs/` | User guides, reference material, configuration, provider behavior, architecture, or developer workflows change. Update the narrowest authoritative page rather than duplicating prose. |
+   | `AGENTS.md` and nested `AGENTS.md` files | Durable engineering rules, validation commands, subsystem ownership, or contributor workflow changes. |
+
+3. Treat English and Simplified Chinese README parity as a contract. The text
+   does not need to be a literal translation, but facts, versions, commands,
+   warnings, and project status must agree.
+4. Do not create documentation churn for a purely internal refactor or
+   test-only change. Still record in the handoff that documentation impact was
+   reviewed and explain briefly why no update was required.
+5. Validate changed documentation before commit:
+   - Always run `git diff --check`.
+   - Verify local README links when either README changes.
+   - Build or run the narrowest available validation for `website/docs/`
+     changes; if the full Docusaurus build is impractical, state exactly what
+     was and was not validated.
+6. Run `git status --short` immediately before committing. Stage only the
+   intended code, tests, and synchronized documentation; preserve unrelated
+   user changes.
+7. Do not commit while implementation, tests, release notes, and user-facing
+   documentation describe different behavior.
 
 ## Contribution Rubric — What We Want / What We Don't
 

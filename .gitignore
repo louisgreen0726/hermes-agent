@@ -120,8 +120,10 @@ website/static/api/skills-meta.json
 website/static/api/automation-blueprints-index.json
 models-dev-upstream/
 
-# Local editor / agent tooling (machine-specific; keep in global config, not the repo)
-.codex/
+# Local editor / agent tooling. Track only the shared Codex project config;
+# session state and every other tool-specific file remain machine-local.
+/.codex/*
+!/.codex/config.toml
 .cursor/
 .gemini/
 .zed/

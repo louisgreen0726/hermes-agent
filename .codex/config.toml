@@ -1,0 +1,4 @@
+# The root AGENTS.md and the Desktop-specific instructions exceed Codex's
+# default 32 KiB project-document limit. Keep enough room for both files so
+# nested Desktop guidance is not dropped from the instruction chain.
+project_doc_max_bytes = 131072

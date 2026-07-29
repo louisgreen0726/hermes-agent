@@ -1,5 +1,19 @@
 # Louis Hermes Agent - Unreleased
 
+## Independent project documentation
+
+- The root project overview now presents Louis Hermes Agent as an independent
+  derivative with its own roadmap, release process, production branch, and
+  update source while preserving Nous Research attribution and the MIT license.
+- Root README maintenance is intentionally limited to English and Simplified
+  Chinese editions, with semantic parity required between them.
+- Repository Codex guidance now requires a documentation-impact review before
+  every commit and maps behavior, release, configuration, and contributor
+  changes to their authoritative documentation surfaces.
+- The tracked Codex project configuration raises the project-instruction limit
+  so the root and Desktop `AGENTS.md` files load together instead of being
+  truncated at the default limit.
+
 ## Named custom provider isolation
 
 - Custom provider names are now durable identities. Different names keep

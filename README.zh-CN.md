@@ -1,208 +1,155 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Hermes Agent" width="100%">
+  <img src="assets/banner.png" alt="Louis Hermes Agent" width="100%">
 </p>
 
-# Hermes Agent ☤
+# Louis Hermes Agent
 
 <p align="center">
-  <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/hermes-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-  <a href="https://nousresearch.com"><img src="https://img.shields.io/badge/Built%20by-Nous%20Research-blueviolet?style=for-the-badge" alt="Built by Nous Research"></a>
-  <a href="README.md"><img src="https://img.shields.io/badge/Lang-English-lightgrey?style=for-the-badge" alt="English"></a>
-  <a href="README.ur-pk.md"><img src="https://img.shields.io/badge/Lang-اردو-green?style=for-the-badge" alt="اردو"></a>
+  <strong>一个源自 Hermes Agent、现由 Louis 项目独立维护的 AI Agent 项目。</strong>
 </p>
 
-**由 [Nous Research](https://nousresearch.com) 构建的自进化 AI 代理。** 它是唯一内置学习闭环的智能代理——从经验中创建技能，在使用中改进技能，主动持久化知识，搜索过往对话，并在跨会话中逐步构建对你的深度理解。可以在 $5 的 VPS 上运行，也可以在 GPU 集群上运行，或者使用几乎零成本的 Serverless 基础设施。它不绑定你的笔记本——你可以在 Telegram 上与它对话，而它在云端 VM 上工作。
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-支持任意模型——[Nous Portal](https://portal.nousresearch.com)、[OpenRouter](https://openrouter.ai)（200+ 模型）、[NVIDIA NIM](https://build.nvidia.com)（Nemotron）、[小米 MiMo](https://platform.xiaomimimo.com)、[z.ai/GLM](https://z.ai)、[Kimi/Moonshot](https://platform.moonshot.ai)、[MiniMax](https://www.minimax.io)、[Hugging Face](https://huggingface.co)、OpenAI，或自定义端点。使用 `hermes model` 即可切换——无需改代码，无锁定。
+<p align="center">
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.19.0.4-2563eb" alt="稳定版本：Louis-0.19.0.4"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT 许可证"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis 项目问题反馈"></a>
+</p>
 
-<table>
-<tr><td><b>真正的终端界面</b></td><td>完整的 TUI，支持多行编辑、斜杠命令自动补全、对话历史、中断重定向和流式工具输出。</td></tr>
-<tr><td><b>随你所在</b></td><td>Telegram、Discord、Slack、WhatsApp、Signal 和 CLI——全部从单个网关进程运行。语音备忘录转写、跨平台对话连续性。</td></tr>
-<tr><td><b>闭环学习</b></td><td>代理管理记忆并定期自我提醒。复杂任务后自动创建技能。技能在使用中自我改进。FTS5 会话搜索配合 LLM 摘要实现跨会话回溯。<a href="https://github.com/plastic-labs/honcho">Honcho</a> 辩证式用户建模。兼容 <a href="https://agentskills.io">agentskills.io</a> 开放标准。</td></tr>
-<tr><td><b>定时自动化</b></td><td>内置 cron 调度器，支持向任何平台投递。日报、夜间备份、周审计——全部用自然语言描述，无人值守运行。</td></tr>
-<tr><td><b>委派与并行</b></td><td>生成隔离子代理处理并行工作流。编写 Python 脚本通过 RPC 调用工具，将多步管道压缩为零上下文开销的轮次。</td></tr>
-<tr><td><b>随处运行</b></td><td>六种终端后端——本地、Docker、SSH、Daytona、Singularity 和 Modal。Daytona 和 Modal 提供 Serverless 持久化——代理环境空闲时休眠、按需唤醒，空闲期间几乎零成本。$5 VPS 或 GPU 集群都能跑。</td></tr>
-<tr><td><b>研究就绪</b></td><td>批量轨迹生成、轨迹压缩——用于训练下一代工具调用模型。</td></tr>
-</table>
+> [!IMPORTANT]
+> Louis Hermes Agent 是
+> [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent)
+> 的独立衍生项目，不是 Nous Research 的官方产品或官方发行版。原项目、原贡献者、
+> 版权声明与 MIT 许可证均会被完整保留和注明。
 
----
+## 这个项目是什么
 
-## 快速安装
+Louis Hermes Agent 是一个可以运行在命令行、终端 UI、Electron 桌面端、
+Web 管理面板和消息网关中的个人 AI Agent。项目保留了 Hermes 原有的工具、
+记忆、技能、插件、定时任务、子代理、模型服务商、终端后端与浏览器自动化基础，
+同时建立自己的产品方向、维护节奏和发布流程。
 
-```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-```
+为了保留清晰的代码来源，本仓库在 GitHub 上仍处于原项目的 fork 网络中；但在
+实际维护和发布层面，它已经作为独立项目运行：
 
-支持 Linux、macOS、WSL2 和 Android (Termux)。安装程序会自动处理平台特定的配置。
+- 所有 Louis 版本均从 `louisgreen0726/hermes-agent` 发布。
+- Louis 安装只会自动更新到本仓库的 `origin/main`。
+- 上游提交只会经过人工评估后选择性吸收，不会自动 merge 或 rebase。
+- 不承诺与上游未来的每一次变更保持完全兼容。
+- GitHub 显示大量“落后于上游”的提交属于预期现象，不代表 Louis 版本失效。
 
-> **Android / Termux：** 已测试的手动安装路径请参考 [Termux 指南](https://hermes-agent.nousresearch.com/docs/getting-started/termux)。在 Termux 上，Hermes 会安装精选的 `.[termux]` 扩展，因为完整的 `.[all]` 扩展会拉取 Android 不兼容的语音依赖。
->
-> **Windows：** 在 PowerShell 中运行：
-> ```powershell
-> iex (irm https://hermes-agent.nousresearch.com/install.ps1)
-> ```
-> 安装完成后，可能需要重启终端，然后运行 `hermes` 开始对话。
+## 项目来源
 
-安装后：
+Louis 独立维护线开始于 2026 年 7 月 27 日（UTC+8），起点为上游 Hermes Agent
+提交
+[`41f2196c`](https://github.com/NousResearch/hermes-agent/commit/41f2196c530b3359d9a7fc9c7bd41e9ddd7882c5)，
+继承时的 Hermes Agent 版本为 `0.19.0`。
 
-```bash
-source ~/.bashrc    # 重新加载 shell（或: source ~/.zshrc）
-hermes              # 开始对话！
-```
+Nous Research 创建了原始 Hermes Agent 架构以及本项目继承代码中的大部分实现。
+Louis 在 MIT 许可证允许的范围内继续开发。源码历史、文档、资源或集成名称中保留的
+Nous Research 引用用于说明代码来源或上游服务，不表示本独立项目属于 Nous Research
+官方发行版。
 
----
+## 当前状态
 
-## 快速入门
+| 项目 | 当前状态 |
+| --- | --- |
+| 维护状态 | 活跃，独立维护 |
+| 生产分支 | `main` |
+| 稳定基线 | [`Louis-0.19.0.4`](docs/releases/LOUIS_0.19.0.4.md) |
+| Python 包版本 | `0.19.0+Louis.4` |
+| 当前 `main` | 稳定基线加上经过审查但尚未正式发版的改动 |
+| 与上游的关系 | 仅选择性评估和回迁 |
+| 自动更新来源 | 仅 Louis `origin/main` |
 
-```bash
-hermes              # 交互式 CLI — 开始对话
-hermes model        # 选择 LLM 提供商和模型
-hermes tools        # 配置启用的工具
-hermes config set   # 设置单个配置项
-hermes gateway      # 启动消息网关（Telegram、Discord 等）
-hermes setup        # 运行完整设置向导（一次性配置所有内容）
-hermes claw migrate # 从 OpenClaw 迁移（如果来自 OpenClaw）
-hermes update       # 更新到最新版本
-hermes doctor       # 诊断问题
-```
+当前 `main` 已包含一个尚未单独发版的服务商隔离修复：多个具名自定义服务商可以
+共用同一个中转 URL，同时保持各自独立的 API Key、模型、API 模式和凭据池。
 
-📖 **[完整文档 →](https://hermes-agent.nousresearch.com/docs/)**
+版本历史和待发布内容记录在
+[`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) 与
+[`docs/releases/LOUIS_UNRELEASED.md`](docs/releases/LOUIS_UNRELEASED.md) 中。
 
----
+## 主要能力
 
-## 省去到处收集 API Key — Nous Portal
+从 Hermes 继承的基础能力包括：
 
-Hermes 始终允许你使用任意服务商，这点不会改变。但如果你不想为模型、网页搜索、图像生成、TTS、云浏览器分别去申请五个不同的 API Key，**[Nous Portal](https://portal.nousresearch.com)** 用一个订阅就能覆盖全部：
+- 交互式 CLI、基于 Ink 的 TUI、Electron 桌面端与 Web 管理面板。
+- Telegram、Discord、Slack、WhatsApp、Signal 等消息平台网关。
+- 持久会话、记忆、技能、插件、MCP、定时任务和子代理委派。
+- 本地、Docker、SSH、Singularity、Modal 和 Daytona 终端环境。
+- 多种模型服务商，以及兼容 OpenAI、Anthropic 和 Responses API 的自定义端点。
 
-- **300+ 模型** — 用 `/model <name>` 随时切换
-- **Tool Gateway** — 网页搜索（Firecrawl）、图像生成（FAL）、文本转语音（OpenAI）、云浏览器（Browser Use），全部通过订阅托管。无需额外注册任何账户。
+Louis 当前独立维护的能力包括：
 
-全新安装时一条命令即可：
+- Telegram Native Guest Mode，以及富 Markdown 表格与中文消息投递。
+- 用于管理模型、服务商、Gateway、诊断、日志、备份和安全更新的原生管理中心。
+- 自定义服务商分组、API 模式保持，以及同一中转端点下具名服务商的凭据隔离。
+- 由候选版本自身控制的更新验证、回归测试门禁、回滚保护和 Gateway 安全重启。
+- 支持按设备保留和定时执行的 WebDAV 备份与恢复。
+- 简体中文 Dashboard、本地化配置元数据与 Louis Dashboard 主题。
 
-```bash
-hermes setup --portal
-```
+更完整的项目与发布策略请参阅 [`LOUIS.md`](LOUIS.md)。
 
-它会通过 OAuth 登录、把 Nous 设为推理服务商，并启用 Tool Gateway。随时用 `hermes portal info` 查看路由状态。完整说明见 [Tool Gateway 文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/tool-gateway)。
+## 安装
 
-你随时可以按工具单独切回自己的 API Key — Gateway 是按工具粒度生效的，不是一刀切。
-
----
-
-## CLI 与消息平台 快速对照
-
-Hermes 有两种入口：用 `hermes` 启动终端 UI，或运行网关从 Telegram、Discord、Slack、WhatsApp、Signal 或 Email 与之对话。进入对话后，许多斜杠命令在两种界面中通用。
-
-| 操作 | CLI | 消息平台 |
-|------|-----|----------|
-| 开始对话 | `hermes` | 运行 `hermes gateway setup` + `hermes gateway start`，然后给机器人发消息 |
-| 开始新对话 | `/new` 或 `/reset` | `/new` 或 `/reset` |
-| 更换模型 | `/model [provider:model]` | `/model [provider:model]` |
-| 设置人格 | `/personality [name]` | `/personality [name]` |
-| 重试或撤销上一轮 | `/retry`、`/undo` | `/retry`、`/undo` |
-| 压缩上下文 / 查看用量 | `/compress`、`/usage`、`/insights [--days N]` | `/compress`、`/usage`、`/insights [days]` |
-| 浏览技能 | `/skills` 或 `/<skill-name>` | `/skills` 或 `/<skill-name>` |
-| 中断当前工作 | `Ctrl+C` 或发送新消息 | `/stop` 或发送新消息 |
-| 平台特定状态 | `/platforms` | `/status`、`/sethome` |
-
-完整命令列表请参阅 [CLI 指南](https://hermes-agent.nousresearch.com/docs/user-guide/cli) 和 [消息网关指南](https://hermes-agent.nousresearch.com/docs/user-guide/messaging)。
-
----
-
-## 文档
-
-所有文档位于 **[hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)**：
-
-| 章节 | 内容 |
-|------|------|
-| [快速开始](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart) | 安装 → 设置 → 2 分钟内开始首次对话 |
-| [CLI 使用](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | 命令、快捷键、人格、会话 |
-| [配置](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) | 配置文件、提供商、模型、所有选项 |
-| [消息网关](https://hermes-agent.nousresearch.com/docs/user-guide/messaging) | Telegram、Discord、Slack、WhatsApp、Signal、Home Assistant |
-| [安全](https://hermes-agent.nousresearch.com/docs/user-guide/security) | 命令审批、DM 配对、容器隔离 |
-| [工具与工具集](https://hermes-agent.nousresearch.com/docs/user-guide/features/tools) | 40+ 工具、工具集系统、终端后端 |
-| [技能系统](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) | 过程记忆、技能中心、创建技能 |
-| [记忆](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory) | 持久记忆、用户画像、最佳实践 |
-| [MCP 集成](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) | 连接任意 MCP 服务器扩展能力 |
-| [定时调度](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) | 定时任务与平台投递 |
-| [上下文文件](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files) | 影响每次对话的项目上下文 |
-| [架构](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | 项目结构、代理循环、关键类 |
-| [贡献](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | 开发设置、PR 流程、代码风格 |
-| [CLI 参考](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) | 所有命令和标志 |
-| [环境变量](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | 完整环境变量参考 |
-
----
-
-## 从 OpenClaw 迁移
-
-如果你来自 OpenClaw，Hermes 可以自动导入你的设置、记忆、技能和 API 密钥。
-
-**首次安装时：** 安装向导（`hermes setup`）会自动检测 `~/.openclaw` 并在配置开始前提供迁移选项。
-
-**安装后任意时间：**
+### Linux、macOS、WSL2 和 Termux
 
 ```bash
-hermes claw migrate              # 交互式迁移（完整预设）
-hermes claw migrate --dry-run    # 预览将要迁移的内容
-hermes claw migrate --preset user-data   # 仅迁移用户数据，不含密钥
-hermes claw migrate --overwrite  # 覆盖已有冲突
+curl -fsSL https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.sh | bash
 ```
 
-导入内容：
-- **SOUL.md** — 人格文件
-- **记忆** — MEMORY.md 和 USER.md 条目
-- **技能** — 用户创建的技能 → `~/.hermes/skills/openclaw-imports/`
-- **命令白名单** — 审批模式
-- **消息设置** — 平台配置、允许用户、工作目录
-- **API 密钥** — 白名单中的密钥（Telegram、OpenRouter、OpenAI、Anthropic、ElevenLabs）
-- **TTS 资产** — 工作区音频文件
-- **工作区指令** — AGENTS.md（使用 `--workspace-target`）
+### Windows 原生 PowerShell
 
-使用 `hermes claw migrate --help` 查看所有选项，或使用 `openclaw-migration` 技能进行交互式代理引导迁移（含干运行预览）。
+```powershell
+iex (irm https://raw.githubusercontent.com/louisgreen0726/hermes-agent/main/scripts/install.ps1)
+```
 
----
-
-## 贡献
-
-欢迎贡献！请参阅 [贡献指南](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) 了解开发设置、代码风格和 PR 流程。
-
-贡献者快速开始——使用标准安装器，然后在它创建的完整 git checkout 中开发：
-`$HERMES_HOME/hermes-agent`（通常是 `~/.hermes/hermes-agent`）。这会匹配
-`hermes update`、托管 venv、lazy dependencies、gateway 和 docs tooling 使用的布局。
+安装完成后：
 
 ```bash
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-cd "${HERMES_HOME:-$HOME/.hermes}/hermes-agent"
-uv pip install -e ".[all,dev]"
-scripts/run_tests.sh
+hermes setup          # 配置模型服务商、工具和集成
+hermes                # 启动交互式 Agent
+hermes-manage         # 打开 Louis 管理中心
+hermes gateway        # 管理消息平台
+hermes doctor         # 诊断安装状态
 ```
 
-手动克隆备用路径（用于一次性 clone / CI，或你明确不想使用 managed install layout 时）：
+## 更新
+
+Louis 安装只从本仓库更新，不会直接同步上游：
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv venv --python 3.11
-source venv/bin/activate
-uv pip install -e ".[all,dev]"
-python -m pytest tests/ -q
+hermes update
 ```
 
----
+生产环境可以先验证候选版本，再执行激活：
 
-## 社区
+```bash
+hermes-update-louis --dry-run
+hermes-update-louis
+```
 
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📚 [技能中心](https://agentskills.io)
-- 🐛 [问题反馈](https://github.com/NousResearch/hermes-agent/issues)
-- 💡 [讨论区](https://github.com/NousResearch/hermes-agent/discussions)
-- 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — 社区微信桥接：在同一微信账号上运行 Hermes Agent 和 OpenClaw。
+不要在生产检出中运行 `git pull upstream main`。上游代码只能在独立集成分支中，
+经过代码审查和 Louis 回归测试后再决定是否吸收。
 
----
+## 文档与支持
 
-## 许可证
+- [项目与发布策略](LOUIS.md)
+- [Louis 版本记录](LOUIS_RELEASE_NOTES.md)
+- [仓库内文档源码](website/docs)
+- [Louis 问题反馈](https://github.com/louisgreen0726/hermes-agent/issues)
+- [原始 Hermes Agent 项目](https://github.com/NousResearch/hermes-agent)
+- [原始上游文档](https://hermes-agent.nousresearch.com/docs/)
 
-MIT — 详见 [LICENSE](LICENSE)。
+上游文档仍可用于了解继承自 Hermes 的通用能力；当上游文档与本仓库的 Louis 特有
+行为或命令不一致时，以本仓库内容为准。
 
-由 [Nous Research](https://nousresearch.com) 构建。
+## 许可证与署名
+
+本项目按照 [MIT 许可证](LICENSE) 分发。
+
+Hermes Agent 最初由 [Nous Research](https://nousresearch.com) 及其贡献者创建。
+Louis Hermes Agent 由 Louis 项目独立维护，与 Nous Research 不存在隶属或官方背书关系。
