@@ -26,6 +26,16 @@
   Both legacy `custom_providers:` names and `providers:` mapping keys resolve to
   the exact configured pool and URL before a credential can be used.
 
+## Desktop Quick Entry
+
+- A global `CommandOrControl+Shift+Space` shortcut now opens a compact prompt
+  window that can send to the current chat, a new session, or a recent session
+  through the existing Desktop submission pipeline.
+- Quick Entry is enabled by default and configurable under **Settings →
+  Advanced**. Invalid or occupied shortcuts are surfaced in the settings UI,
+  disabling the feature releases the OS registration, and a disconnected app
+  keeps the composer from accepting a prompt it cannot deliver.
+
 ## Verification
 
 - End-to-end CLI coverage configures two model-specific keys on one relay and

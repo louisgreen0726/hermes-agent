@@ -626,7 +626,14 @@ export const ar = defineLocale({
       shortcutDesc: 'يحتاج إلى مفتاح تعديل واحد على الأقل، مثل CommandOrControl+Shift+Space.',
       active: 'الاختصار مفعّل.',
       takenBy: 'يستخدم تطبيق آخر هذا الاختصار — اختر اختصارا مختلفا.',
-      invalidShortcut: 'ليس اختصارا صالحا. أضف مفتاح تعديل واحدا على الأقل.'
+      invalidShortcut: 'ليس اختصارا صالحا. أضف مفتاح تعديل واحدا على الأقل.',
+      inputLabel: 'الإدخال السريع',
+      promptPlaceholder: 'اسأل Hermes…',
+      disconnectedPlaceholder: 'غير متصل. افتح Hermes لإعادة الاتصال.',
+      sendTo: 'إرسال إلى',
+      targetLabel: 'الجلسة المستهدفة',
+      currentChat: 'المحادثة الحالية',
+      newSession: 'جلسة جديدة'
     },
     credentials: {
       pasteKey: 'لصق المفتاح',

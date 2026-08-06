@@ -645,7 +645,14 @@ export const zhHant = defineLocale({
       shortcutDesc: '至少需要一個修飾鍵，例如 CommandOrControl+Shift+Space。',
       active: '快速鍵已生效。',
       takenBy: '此快速鍵已被其他應用程式占用，請換一個。',
-      invalidShortcut: '不是有效的快速鍵。請至少包含一個修飾鍵。'
+      invalidShortcut: '不是有效的快速鍵。請至少包含一個修飾鍵。',
+      inputLabel: '快速輸入',
+      promptPlaceholder: '詢問 Hermes…',
+      disconnectedPlaceholder: '尚未連線。請開啟 Hermes 以重新連線。',
+      sendTo: '傳送至',
+      targetLabel: '目標對話',
+      currentChat: '目前聊天',
+      newSession: '新對話'
     },
     credentials: {
       pasteKey: '貼上金鑰',

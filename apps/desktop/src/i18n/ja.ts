@@ -658,7 +658,14 @@ export const ja = defineLocale({
       shortcutDesc: '修飾キーが 1 つ以上必要です（例: CommandOrControl+Shift+Space）。',
       active: 'ショートカットは有効です。',
       takenBy: 'このショートカットは他のアプリが使用しています。別のものを選んでください。',
-      invalidShortcut: '有効なショートカットではありません。修飾キーを 1 つ以上含めてください。'
+      invalidShortcut: '有効なショートカットではありません。修飾キーを 1 つ以上含めてください。',
+      inputLabel: 'クイック入力',
+      promptPlaceholder: 'Hermes に質問…',
+      disconnectedPlaceholder: '未接続です。Hermes を開いて再接続してください。',
+      sendTo: '送信先',
+      targetLabel: '送信先セッション',
+      currentChat: '現在のチャット',
+      newSession: '新しいセッション'
     },
     credentials: {
       pasteKey: 'キーを貼り付け',

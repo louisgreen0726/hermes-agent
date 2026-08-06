@@ -4,6 +4,7 @@ import {
   createQuickEntryShortcut,
   DEFAULT_QUICK_ENTRY_SHORTCUT,
   type GlobalShortcutLike,
+  mergeQuickEntrySettingsPatch,
   parseQuickEntryShortcut,
   quickEntryWindowBounds,
   sanitizeQuickEntrySettings
@@ -97,6 +98,28 @@ describe('sanitizeQuickEntrySettings', () => {
 
   it('treats a non-boolean enabled as off (only `true` opts in once present)', () => {
     expect(sanitizeQuickEntrySettings({ enabled: 'yes' }).enabled).toBe(false)
+  })
+})
+
+describe('mergeQuickEntrySettingsPatch', () => {
+  const current = { enabled: true, shortcut: DEFAULT_QUICK_ENTRY_SHORTCUT }
+
+  it('preserves an invalid interactive shortcut so registration can surface the error', () => {
+    const next = mergeQuickEntrySettingsPatch(current, { shortcut: 'Q' })
+    const { globalShortcut } = fakeGlobalShortcut()
+    const state = createQuickEntryShortcut(globalShortcut, vi.fn()).apply(next)
+
+    expect(next).toEqual({ enabled: true, shortcut: 'Q' })
+    expect(state).toEqual({ error: 'invalid', registered: false, shortcut: 'Q' })
+    expect(globalShortcut.register).not.toHaveBeenCalled()
+  })
+
+  it('merges enablement and trims a requested shortcut without replacing omitted values', () => {
+    expect(mergeQuickEntrySettingsPatch(current, { enabled: false, shortcut: '  Alt+J  ' })).toEqual({
+      enabled: false,
+      shortcut: 'Alt+J'
+    })
+    expect(mergeQuickEntrySettingsPatch(current, {})).toEqual(current)
   })
 })
 

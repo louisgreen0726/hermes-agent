@@ -112,6 +112,12 @@ The app also surfaces the broader Hermes management surface so you don't have to
 
 ### Keyboard & navigation
 
+- **Quick Entry** — press **CommandOrControl+Shift+Space** from anywhere to open
+  a compact prompt window without raising the full app. Send to the current
+  chat, start a new session, or choose one of your recent sessions. Quick Entry
+  is enabled by default; change or disable its global shortcut under **Settings
+  → Advanced**. The settings row reports an invalid shortcut or a shortcut
+  already held by another application instead of failing silently.
 - **Command palette** — press **Cmd+K** (Ctrl+K on Windows/Linux) to jump to actions and navigate the app from the keyboard.
 - **Rebindable shortcuts** — a shortcuts panel in Settings lets you remap the app's keyboard shortcuts to your own keys.
 - **Custom zoom shortcuts** — zoom the interface in half-step increments for finer control over text size.

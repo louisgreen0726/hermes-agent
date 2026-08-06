@@ -1,12 +1,15 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { controlVariants } from '@/components/ui/control'
+import { Input } from '@/components/ui/input'
+import { useI18n } from '@/i18n'
+import { cn } from '@/lib/utils'
 import {
   initialQuickComposerState,
   QUICK_TARGET_CURRENT,
   QUICK_TARGET_NEW,
   type QuickComposerEvent,
-  quickComposerReducer,
-  type QuickComposerState
+  quickComposerReducer
 } from '@/store/quick-entry'
 
 /**
@@ -26,23 +29,29 @@ import {
  * the primary renderer's normal prompt-submit path.
  */
 export function QuickEntryApp() {
+  const { t } = useI18n()
+  const q = t.settings.quickEntry
   const inputRef = useRef<HTMLInputElement>(null)
+  const stateRef = useRef(initialQuickComposerState)
+  const [state, setState] = useState(initialQuickComposerState)
 
-  // The reducer returns { send, state }; this wrapper performs the side effect
-  // (hand the payload to the shell, ask to hide) and stores the next state, so
-  // the decision stays pure and testable while the effects stay in one place.
-  const [state, dispatch] = useReducer((current: QuickComposerState, event: QuickComposerEvent) => {
+  // Keep effects outside React's reducer/updater callbacks: Strict Mode may
+  // invoke those callbacks twice. The ref advances synchronously so two Enter
+  // events in one frame still see `submitting: true` after the first send.
+  const dispatch = useCallback((event: QuickComposerEvent) => {
+    const current = stateRef.current
     const { send, state: next } = quickComposerReducer(current, event)
     const api = window.hermesDesktop?.quickEntry
+
+    stateRef.current = next
+    setState(next)
 
     if (send) {
       api?.submit(send)
     } else if (!next.visible && current.visible) {
       api?.dismiss()
     }
-
-    return next
-  }, initialQuickComposerState)
+  }, [])
 
   // Re-summoned by the chord: the shell reuses the window, so reset the draft
   // and take the keyboard back for a fresh capture. Also adopt gateway-state
@@ -69,99 +78,50 @@ export function QuickEntryApp() {
       offShown?.()
       offState?.()
     }
-  }, [])
+  }, [dispatch])
 
   return (
-    <div
-      style={{
-        alignItems: 'center',
-        background: 'transparent',
-        display: 'flex',
-        height: '100vh',
-        justifyContent: 'center',
-        padding: 12,
-        width: '100vw'
-      }}
-    >
-      <div
-        style={{
-          background: 'var(--ui-bg-elevated, var(--background))',
-          border: '1px solid var(--ui-stroke-secondary, rgba(127,127,127,0.35))',
-          borderRadius: 12,
-          boxShadow: '0 18px 48px rgba(0,0,0,0.38)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          padding: '10px 14px',
-          width: '100%'
-        }}
-      >
-        <div style={{ alignItems: 'center', display: 'flex', gap: 10 }}>
-          <span
-            aria-hidden
-            style={{
-              color: 'var(--muted-foreground, #8a8a8a)',
-              flexShrink: 0,
-              fontSize: 15,
-              lineHeight: 1,
-              userSelect: 'none'
-            }}
-          >
-            ›
-          </span>
-          <input
-            aria-label="Quick Entry"
-            autoCapitalize="off"
-            autoComplete="off"
-            autoCorrect="off"
-            disabled={!state.connected}
-            onBlur={event => {
-              // Moving focus to the target picker is not leaving the window.
-              if (!event.relatedTarget) {
-                dispatch({ type: 'blur' })
-              }
-            }}
-            onChange={event => dispatch({ draft: event.target.value, type: 'edit' })}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                dispatch({ type: 'submit' })
-              } else if (event.key === 'Escape') {
-                event.preventDefault()
-                dispatch({ type: 'dismiss' })
-              }
-            }}
-            placeholder={state.connected ? 'Ask Hermes…' : 'Not connected — open Hermes to reconnect'}
-            ref={inputRef}
-            spellCheck={false}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--foreground, #eee)',
-              flex: 1,
-              fontFamily: 'inherit',
-              fontSize: 15,
-              minWidth: 0,
-              opacity: state.connected ? 1 : 0.55,
-              outline: 'none'
-            }}
-            value={state.draft}
-          />
-        </div>
-        <div style={{ alignItems: 'center', display: 'flex', gap: 8 }}>
+    <div className="flex h-screen w-screen items-center justify-center p-3">
+      <div className="flex w-full flex-col gap-2 rounded-md border border-(--stroke-nous) bg-(--ui-chat-bubble-background) px-3.5 py-2.5 shadow-nous">
+        <Input
+          aria-label={q.inputLabel}
+          disabled={!state.connected}
+          onBlur={event => {
+            // Moving focus to the target picker is not leaving the window.
+            if (!event.relatedTarget) {
+              dispatch({ type: 'blur' })
+            }
+          }}
+          onChange={event => dispatch({ draft: event.target.value, type: 'edit' })}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              dispatch({ type: 'submit' })
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              dispatch({ type: 'dismiss' })
+            }
+          }}
+          placeholder={state.connected ? q.promptPlaceholder : q.disconnectedPlaceholder}
+          prefix={
+            <span aria-hidden className="text-sm leading-none text-(--ui-text-tertiary)">
+              ›
+            </span>
+          }
+          ref={inputRef}
+          size="lg"
+          value={state.draft}
+        />
+        <div className="flex items-center gap-2">
           <label
+            className="shrink-0 text-[0.6875rem] text-(--ui-text-tertiary) select-none"
             htmlFor="quick-entry-target"
-            style={{
-              color: 'var(--muted-foreground, #8a8a8a)',
-              flexShrink: 0,
-              fontSize: 11,
-              userSelect: 'none'
-            }}
           >
-            Send to
+            {q.sendTo}
           </label>
           <select
-            aria-label="Target session"
+            aria-label={q.targetLabel}
+            className={cn(controlVariants({ size: 'xs' }), 'max-w-80 flex-1')}
             disabled={!state.connected}
             id="quick-entry-target"
             onChange={event => dispatch({ target: event.target.value, type: 'target' })}
@@ -171,19 +131,10 @@ export function QuickEntryApp() {
                 dispatch({ type: 'dismiss' })
               }
             }}
-            style={{
-              background: 'transparent',
-              border: '1px solid var(--ui-stroke-secondary, rgba(127,127,127,0.35))',
-              borderRadius: 6,
-              color: 'var(--foreground, #eee)',
-              fontSize: 11,
-              maxWidth: 320,
-              padding: '2px 6px'
-            }}
             value={state.target}
           >
-            <option value={QUICK_TARGET_CURRENT}>Current chat</option>
-            <option value={QUICK_TARGET_NEW}>New session</option>
+            <option value={QUICK_TARGET_CURRENT}>{q.currentChat}</option>
+            <option value={QUICK_TARGET_NEW}>{q.newSession}</option>
             {state.sessions.map(session => (
               <option key={session.id} value={session.id}>
                 {session.title}

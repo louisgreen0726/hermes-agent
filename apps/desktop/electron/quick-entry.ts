@@ -295,6 +295,22 @@ export function sanitizeQuickEntrySettings(raw: unknown): QuickEntrySettings {
   }
 }
 
+/**
+ * Apply a renderer settings patch without normalizing the requested shortcut.
+ * Persisted files use `sanitizeQuickEntrySettings`, but an interactive invalid
+ * chord must reach the shortcut controller so Settings can surface `invalid`
+ * instead of silently replacing the user's input with the default.
+ */
+export function mergeQuickEntrySettingsPatch(current: QuickEntrySettings, patch: unknown): QuickEntrySettings {
+  const record = patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {}
+  const shortcut = typeof record.shortcut === 'string' ? record.shortcut.trim() : ''
+
+  return {
+    enabled: record.enabled === undefined ? current.enabled : record.enabled === true,
+    shortcut: shortcut || current.shortcut
+  }
+}
+
 /** The slice of Electron's `globalShortcut` we use (injected for testing). */
 export interface GlobalShortcutLike {
   isRegistered(accelerator: string): boolean

@@ -140,7 +140,12 @@ import { createKeepAwake } from './power-save'
 import { FirstRunSetupResetError, runPrimaryBackendStartup } from './primary-backend-startup'
 import { rehomePrimaryConnection } from './primary-connection-rehome'
 import { decideProfileDeleteAction, profileNameFromDeleteRequest, resolveRouteProfile } from './profile-delete-routing'
-import { createQuickEntryShortcut, quickEntryWindowBounds, sanitizeQuickEntrySettings } from './quick-entry'
+import {
+  createQuickEntryShortcut,
+  mergeQuickEntrySettingsPatch,
+  quickEntryWindowBounds,
+  sanitizeQuickEntrySettings
+} from './quick-entry'
 import * as remoteLifecycle from './remote-lifecycle'
 import { RemoteLivenessTracker, RemoteRevalidationCoordinator, revalidateRemoteConnection } from './remote-liveness'
 import {
@@ -9001,6 +9006,16 @@ function createWindow() {
       mainWindow = null
       // the replacement renderer must register before queued links can be delivered.
       _rendererReadyForDeepLink = false
+
+      // The quick window has no gateway of its own. Once its authoritative
+      // primary renderer is gone, stale "connected" state would accept a prompt
+      // that main can no longer route and then hide it. Publish an honest
+      // disconnected state until a replacement primary renderer reports back.
+      quickEntryLastState = { connected: false, sessions: [] }
+
+      if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
+        quickEntryWindow.webContents.send('hermes:quick-entry:state', quickEntryLastState)
+      }
     }
   })
 
@@ -10200,10 +10215,7 @@ ipcMain.handle('hermes:quick-entry:settings:get', async () => {
 
 ipcMain.handle('hermes:quick-entry:settings:set', async (_event, patch) => {
   const current = readQuickEntrySettings()
-  const next = sanitizeQuickEntrySettings({
-    enabled: patch?.enabled === undefined ? current.enabled : patch.enabled === true,
-    shortcut: typeof patch?.shortcut === 'string' && patch.shortcut.trim() ? patch.shortcut : current.shortcut
-  })
+  const next = mergeQuickEntrySettingsPatch(current, patch)
 
   writeQuickEntrySettings(next)
 

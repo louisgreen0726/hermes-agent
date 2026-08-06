@@ -551,7 +551,14 @@ export const en: Translations = {
       shortcutDesc: 'Needs at least one modifier, e.g. CommandOrControl+Shift+Space.',
       active: 'Shortcut is active.',
       takenBy: 'Another app already uses this shortcut — pick a different one.',
-      invalidShortcut: 'Not a valid shortcut. Include at least one modifier key.'
+      invalidShortcut: 'Not a valid shortcut. Include at least one modifier key.',
+      inputLabel: 'Quick Entry',
+      promptPlaceholder: 'Ask Hermes…',
+      disconnectedPlaceholder: 'Not connected. Open Hermes to reconnect.',
+      sendTo: 'Send to',
+      targetLabel: 'Target session',
+      currentChat: 'Current chat',
+      newSession: 'New session'
     },
     credentials: {
       pasteKey: 'Paste key',
