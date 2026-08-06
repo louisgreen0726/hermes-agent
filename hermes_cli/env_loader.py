@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
+from hermes_constants import get_process_hermes_home
 from utils import atomic_replace, fast_safe_load
 
 
@@ -511,7 +512,7 @@ def _load_secrets_config(home_path: Path) -> dict:
     # direct isolated parse if the shared reader is unavailable, preserving
     # the "malformed config can't take down dotenv loading" property (the
     # shared reader also swallows parse errors and returns {}).
-    if home_path == _process_hermes_home():
+    if home_path == get_process_hermes_home():
         try:
             from hermes_cli.config import read_raw_config
 
@@ -529,13 +530,3 @@ def _load_secrets_config(home_path: Path) -> dict:
     except Exception:  # noqa: BLE001
         return {}
     return data.get("secrets") or {}
-
-
-def _process_hermes_home() -> Path:
-    """The HERMES_HOME the shared config cache is keyed to."""
-    try:
-        from hermes_constants import get_hermes_home
-
-        return get_hermes_home()
-    except Exception:
-        return Path.home() / ".hermes"
