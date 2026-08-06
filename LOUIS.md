@@ -7,8 +7,11 @@ independently maintained derivative of Hermes Agent.
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.19.0.4`
-- Python package version: `0.19.0+Louis.4`
+- User-facing version: `Louis-0.20.0.1`
+- Python package version: `0.20.0+Louis.1`
+- Desktop package version: `0.20.0-louis.1`
+- Selectively integrated upstream baseline: Hermes Agent `0.20.0`
+  (`2026.8.3`)
 - Source project: `https://github.com/NousResearch/hermes-agent`
 
 The independent Louis line began from Nous Research Hermes Agent commit
@@ -19,7 +22,7 @@ source. It is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.19.0.4`.
+- The versioned baseline is `Louis-0.20.0.1` (released 2026-08-07).
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -36,7 +39,7 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.19.0.4 baseline carries:
+The versioned 0.20.0.1 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
@@ -65,6 +68,25 @@ The versioned 0.19.0.4 baseline carries:
   regression gate.
 - Bounded models.dev offline probes so model pickers remain responsive when the
   registry and local cache are unavailable.
+- Selectively adopted Hermes 0.20.0 security updates: current cryptography,
+  Starlette, and multipart pins, linear-time config redaction, and approval for
+  Docker/Podman daemon redirects.
+- Correctness improvements for terminal error hints, already-applied patches,
+  zero-match/multi-path search recovery, and verified file writes without a new
+  core model tool.
+- `/init` project guidance generation, zero-model-turn `!` shell commands, lazy
+  heavy imports, and process-home-aware reuse of one startup config parse.
+- Grounded Citations with a source ledger and evidence-backed fact-check mode,
+  plus explicitly configured outbound webhooks with bounded async delivery,
+  no redirects, optional HMAC-SHA256, and trusted-endpoint guidance.
+- Unified STT language precedence and local Whisper initial prompts across CLI,
+  Gateway, command, and plugin providers.
+- Shared TTS cleaning and voice routing with speed, instructions, provider,
+  OpenAI-compatible language, and xAI normalization controls while preserving
+  original Telegram captions.
+- Desktop Quick Entry through the existing current/new/recent-session
+  submission flow, with a main-process global shortcut, visible registration
+  errors, restricted IPC, and complete shipped-locale coverage.
 
 ## Management center
 
@@ -137,6 +159,7 @@ edit, but the impact review is still mandatory. The detailed checklist lives in
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.20.0.1](docs/releases/LOUIS_0.20.0.1.md)
 - [Louis Hermes Agent 0.19.0.4](docs/releases/LOUIS_0.19.0.4.md)
 - [Louis Hermes Agent 0.19.0.3](docs/releases/LOUIS_0.19.0.3.md)
 - [Louis Hermes Agent 0.19.0.2](docs/releases/LOUIS_0.19.0.2.md)

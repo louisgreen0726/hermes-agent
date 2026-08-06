@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.19.0.4-2563eb" alt="稳定版本：Louis-0.19.0.4"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.1-2563eb" alt="稳定版本：Louis-0.20.0.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT 许可证"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis 项目问题反馈"></a>
 </p>
@@ -48,6 +48,9 @@ Louis 独立维护线开始于 2026 年 7 月 27 日（UTC+8），起点为上�
 [`41f2196c`](https://github.com/NousResearch/hermes-agent/commit/41f2196c530b3359d9a7fc9c7bd41e9ddd7882c5)，
 继承时的 Hermes Agent 版本为 `0.19.0`。
 
+当前版本化基线选择性吸收了 Hermes Agent `0.20.0`（上游发布版本
+`2026.8.3`）中经过审查的改动。这是经审计的回迁边界，不代表整体代码树同步。
+
 Nous Research 创建了原始 Hermes Agent 架构以及本项目继承代码中的大部分实现。
 Louis 在 MIT 许可证允许的范围内继续开发。源码历史、文档、资源或集成名称中保留的
 Nous Research 引用用于说明代码来源或上游服务，不表示本独立项目属于 Nous Research
@@ -59,14 +62,15 @@ Nous Research 引用用于说明代码来源或上游服务，不表示本独立
 | --- | --- |
 | 维护状态 | 活跃，独立维护 |
 | 生产分支 | `main` |
-| 稳定基线 | [`Louis-0.19.0.4`](docs/releases/LOUIS_0.19.0.4.md) |
-| Python 包版本 | `0.19.0+Louis.4` |
-| 当前 `main` | 稳定基线加上经过审查但尚未正式发版的改动 |
+| 稳定基线 | [`Louis-0.20.0.1`](docs/releases/LOUIS_0.20.0.1.md) |
+| Python 包版本 | `0.20.0+Louis.1` |
+| 选择性上游基线 | Hermes Agent `0.20.0` / `2026.8.3` |
+| 当前 `main` | `Louis-0.20.0.1` 稳定基线 |
 | 与上游的关系 | 仅选择性评估和回迁 |
 | 自动更新来源 | 仅 Louis `origin/main` |
 
-当前 `main` 已包含一个尚未单独发版的服务商隔离修复：多个具名自定义服务商可以
-共用同一个中转 URL，同时保持各自独立的 API Key、模型、API 模式和凭据池。
+多个具名自定义服务商可以共用同一个中转 URL，同时保持各自独立的 API Key、模型、
+API 模式和凭据池；这一身份隔离约束已经属于稳定基线。
 
 版本历史和待发布内容记录在
 [`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) 与
@@ -90,6 +94,16 @@ Louis 当前独立维护的能力包括：
 - 由候选版本自身控制的更新验证、回归测试门禁、回滚保护和 Gateway 安全重启。
 - 支持按设备保留和定时执行的 WebDAV 备份与恢复。
 - 简体中文 Dashboard、本地化配置元数据与 Louis Dashboard 主题。
+- 选择性吸收 0.20.0 的依赖、脱敏、daemon 审批、终端提示、patch、搜索和写入
+  落盘校验加固。
+- `/init`、直接 `!` shell 命令、重依赖懒加载，以及按 process home 隔离的启动
+  配置缓存。
+- 带证据事实核查的 Grounded Citations，以及显式启用、支持签名和有界异步投递的
+  outbound webhook。
+- 统一的 STT 语言选择与本地 Whisper prompt，并为 TTS 提供共享清洗、速度、
+  instructions、provider、language 和 xAI normalization 控制。
+- Desktop Quick Entry 复用现有提交流程投递到当前、新建或最近会话，并提供可见的
+  全局快捷键错误和全部内置语言支持。
 
 更完整的项目与发布策略请参阅 [`LOUIS.md`](LOUIS.md)。
 

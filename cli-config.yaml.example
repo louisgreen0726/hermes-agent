@@ -87,7 +87,7 @@ model:
   # default_headers:
   #   User-Agent: "Hermes-Agent/{hermes_version}"
   #   The {hermes_version} placeholder resolves to the running Hermes release
-  #   (for example, Louis-0.19.0.4) without rewriting config.yaml on updates.
+  #   (for example, Louis-0.20.0.1) without rewriting config.yaml on updates.
   #
   # extra_headers: accepted as an alias of default_headers (merged, with
   #   extra_headers winning when both are set) — matches the per-provider

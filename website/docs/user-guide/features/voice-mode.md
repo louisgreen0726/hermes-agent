@@ -412,11 +412,13 @@ stt:
                                     # inbound message, useful for custom pipelines
                                     # (diarization, alignment, archival, etc.)
   provider: "local"                  # "local" (free) | "groq" | "openai" | "mistral" | "xai"
+  language: ""                       # global ISO-639-1 hint for every provider; blank = auto-detect
   local:
     model: "base"                    # tiny, base, small, medium, large-v3
-    language: ""                     # optional ISO-639-1 hint; blank = use HERMES_LOCAL_STT_LANGUAGE if set, else auto-detect
+    language: ""                     # per-provider override of stt.language
+    initial_prompt: ""               # optional Whisper vocabulary/script bias
   groq:
-    language: ""                     # optional ISO-639-1 hint; blank = use HERMES_LOCAL_STT_LANGUAGE if set, else auto-detect
+    language: ""                     # per-provider override of stt.language
   # model: "whisper-1"              # Legacy: used when provider is not set
 
 # Text-to-Speech
@@ -442,6 +444,12 @@ tts:
     model: neuphonic/neutts-air-q4-gguf
     device: cpu
 ```
+
+All STT providers resolve language in the same order:
+`stt.<provider>.language` -> `stt.language` -> the legacy
+`HERMES_LOCAL_STT_LANGUAGE` environment variable -> provider auto-detection.
+Use `stt.local.initial_prompt` when local faster-whisper needs a vocabulary or
+script hint; it does not replace the language setting.
 
 ### Environment Variables
 

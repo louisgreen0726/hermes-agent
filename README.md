@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.19.0.4-2563eb" alt="Stable release: Louis-0.19.0.4"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.1-2563eb" alt="Stable release: Louis-0.20.0.1"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT License"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis project issues"></a>
 </p>
@@ -52,6 +52,10 @@ Hermes Agent commit
 [`41f2196c`](https://github.com/NousResearch/hermes-agent/commit/41f2196c530b3359d9a7fc9c7bd41e9ddd7882c5).
 The inherited codebase was Hermes Agent `0.19.0`.
 
+The current versioned baseline selectively integrates reviewed changes from
+Hermes Agent `0.20.0` (upstream release `2026.8.3`). This is an audited
+backport boundary, not a whole-tree synchronization point.
+
 Nous Research created the original Hermes Agent architecture and the majority
 of the inherited implementation. Louis development builds on that work under
 the MIT License. References to Nous Research that remain in source history,
@@ -65,15 +69,16 @@ official Nous Research release.
 | --- | --- |
 | Maintenance | Active, independently maintained |
 | Production branch | `main` |
-| Stable baseline | [`Louis-0.19.0.4`](docs/releases/LOUIS_0.19.0.4.md) |
-| Python package version | `0.19.0+Louis.4` |
-| Current `main` | Stable baseline plus reviewed, unreleased changes |
+| Stable baseline | [`Louis-0.20.0.1`](docs/releases/LOUIS_0.20.0.1.md) |
+| Python package version | `0.20.0+Louis.1` |
+| Selective upstream baseline | Hermes Agent `0.20.0` / `2026.8.3` |
+| Current `main` | `Louis-0.20.0.1` stable baseline |
 | Upstream relationship | Selective review and backporting only |
 | Automatic updates | Louis `origin/main` only |
 
-The current `main` branch includes an unreleased provider-isolation fix: named
-custom providers can use the same relay URL while retaining separate API keys,
-models, API modes, and credential pools.
+Named custom providers can share one relay URL while retaining separate API
+keys, models, API modes, and credential pools; this identity contract is part
+of the stable baseline.
 
 Release history and pending changes are tracked in
 [`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) and
@@ -104,6 +109,18 @@ Louis-specific work currently includes:
 - WebDAV backup and restore with per-device retention and scheduled execution.
 - A Simplified Chinese dashboard, localized configuration metadata, and Louis
   dashboard themes.
+- Selectively adopted 0.20.0 dependency, redaction, daemon-approval, terminal,
+  patch, search, and verified-write hardening.
+- `/init`, direct `!` shell commands, lazy heavy imports, and
+  process-home-aware startup config caching.
+- Grounded Citations with evidence-backed fact checking, plus opt-in signed
+  outbound webhooks with bounded asynchronous delivery.
+- Unified STT language selection and local Whisper prompts, together with
+  shared TTS cleaning, speed, instructions, provider, language, and xAI
+  normalization controls.
+- Desktop Quick Entry for current, new, and recent sessions through the
+  existing submission pipeline, with visible global-shortcut errors and all
+  shipped locales.
 
 See [`LOUIS.md`](LOUIS.md) for the detailed project and release policy.
 

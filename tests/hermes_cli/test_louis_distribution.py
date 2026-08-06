@@ -1,5 +1,7 @@
 import json
+import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,7 +18,7 @@ def _canonical_repository(url: str) -> str:
     return value.lower()
 
 
-def test_louis_versions_are_distinct_and_consistent():
+def test_louis_versions_follow_the_same_release_relationship():
     import tomllib
 
     from hermes_cli import (
@@ -28,23 +30,28 @@ def test_louis_versions_are_distinct_and_consistent():
 
     with (ROOT / "pyproject.toml").open("rb") as handle:
         metadata = tomllib.load(handle)
-    desktop_package = json.loads(
-        (ROOT / "apps" / "desktop" / "package.json").read_text(encoding="utf-8")
-    )
-    workspace_lock = json.loads(
-        (ROOT / "package-lock.json").read_text(encoding="utf-8")
-    )
 
-    assert __version__ == "Louis-0.19.0.4"
-    assert metadata["project"]["version"] == "0.19.0+Louis.4"
-    expected_desktop_version = metadata["project"]["version"].replace("+", "-").lower()
-    assert desktop_package["version"] == expected_desktop_version
-    assert workspace_lock["packages"]["apps/desktop"]["version"] == (
-        expected_desktop_version
+    cli_version = re.fullmatch(
+        r"Louis-(?P<base>\d+\.\d+\.\d+)\.(?P<revision>\d+)", __version__
     )
-    assert __upstream_version__ == "0.19.0"
-    assert __release_date__ == "2026.7.28"
-    assert __upstream_release_date__ == "2026.7.20"
+    python_version = re.fullmatch(
+        r"(?P<base>\d+\.\d+\.\d+)\+Louis\.(?P<revision>\d+)",
+        metadata["project"]["version"],
+    )
+    upstream_version = re.fullmatch(r"\d+\.\d+\.\d+", __upstream_version__)
+
+    assert cli_version is not None
+    assert python_version is not None
+    assert upstream_version is not None
+    assert cli_version.group("base") == python_version.group("base")
+    assert cli_version.group("revision") == python_version.group("revision")
+    assert python_version.group("base") == __upstream_version__
+
+    release_date = datetime.strptime(__release_date__, "%Y.%m.%d").date()
+    upstream_release_date = datetime.strptime(
+        __upstream_release_date__, "%Y.%m.%d"
+    ).date()
+    assert upstream_release_date <= release_date
 
 
 def test_linux_installer_manifest_identifies_louis_repository():

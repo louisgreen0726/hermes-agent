@@ -1,44 +1,8 @@
 # Louis Hermes Agent - Unreleased
 
-## Independent project documentation
+Changes merged after `Louis-0.20.0.1` will be recorded here. The versioned
+release record is [LOUIS_0.20.0.1.md](LOUIS_0.20.0.1.md).
 
-- The root project overview now presents Louis Hermes Agent as an independent
-  derivative with its own roadmap, release process, production branch, and
-  update source while preserving Nous Research attribution and the MIT license.
-- Root README maintenance is intentionally limited to English and Simplified
-  Chinese editions, with semantic parity required between them.
-- Repository Codex guidance now requires a documentation-impact review before
-  every commit and maps behavior, release, configuration, and contributor
-  changes to their authoritative documentation surfaces.
-- The tracked Codex project configuration raises the project-instruction limit
-  so the root and Desktop `AGENTS.md` files load together instead of being
-  truncated at the default limit.
+## Pending
 
-## Named custom provider isolation
-
-- Custom provider names are now durable identities. Different names keep
-  separate models, API modes, `.env` key references, and credential pools even
-  when they share one relay `base_url`.
-- Re-saving the same name updates that provider, including endpoint, model, and
-  credentials. URL-only matching remains for unnamed and legacy callers.
-- Credential-pool validation now carries the requested custom provider through
-  agent initialization, 401/429 recovery, and cross-turn fallback restoration.
-  Both legacy `custom_providers:` names and `providers:` mapping keys resolve to
-  the exact configured pool and URL before a credential can be used.
-
-## Desktop Quick Entry
-
-- A global `CommandOrControl+Shift+Space` shortcut now opens a compact prompt
-  window that can send to the current chat, a new session, or a recent session
-  through the existing Desktop submission pipeline.
-- Quick Entry is enabled by default and configurable under **Settings →
-  Advanced**. Invalid or occupied shortcuts are surfaced in the settings UI,
-  disabling the feature releases the OS registration, and a disconnected app
-  keeps the composer from accepting a prompt it cannot deliver.
-
-## Verification
-
-- End-to-end CLI coverage configures two model-specific keys on one relay and
-  verifies independent persistence and runtime resolution.
-- Custom-provider, runtime, credential-pool, fallback, Dashboard, and
-  delegation regression suites pass with the new identity invariant.
+- None.
