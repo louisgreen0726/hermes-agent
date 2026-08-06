@@ -1,8 +1,8 @@
 ---
 name: grounded-citations
-description: "Ground answers and documents in cited, verifiable sources."
+description: "Ground answers in cited, verifiable sources."
 version: 1.1.0
-author: Hermes Agent + Teknium
+author: Teknium + Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
@@ -12,7 +12,7 @@ metadata:
     related_skills: [research-paper-writing, arxiv, ocr-and-documents]
 ---
 
-# Grounded Citations
+# Grounded Citations Skill
 
 Every claim taken from an outside source gets an inline numbered citation and a
 `Sources:` list, Perplexity-style. A ledger script owns the `url → [n]` mapping
@@ -48,15 +48,15 @@ Mention a URL only if the user would plausibly want the link.
 
 None beyond the standard toolset. `scripts/sources.py` is stdlib-only Python 3.
 Retrieval comes from whatever is configured: `web_search`, `web_extract`,
-`browser_navigate`, or `terminal` (curl, CLIs).
+`browser_navigate`, or `terminal`.
 
 Ledger location: `$HERMES_HOME/cache/citations/ledger.json` (profile-aware).
-Override per task with `--ledger <path>` or `HERMES_CITATION_LEDGER`.
+For a task-specific location, use `--ledger <path>`.
 
 ## How to Run
 
 ```bash
-S=~/.hermes/skills/research/grounded-citations/scripts/sources.py
+S=scripts/sources.py
 
 python3 "$S" reset                                  # start a clean ledger
 python3 "$S" add https://example.com/a --title "A"  # prints: [1]
@@ -206,8 +206,8 @@ and read the `info: stats:` line to see the counts before picking a number.
 - **Citing the ledger in code/config artifacts.** Source comments belong in
   prose deliverables and doc headers, not inside generated code.
 - **Parallel subagents.** Each subagent has its own working directory; point
-  them all at one ledger with `--ledger` (or `HERMES_CITATION_LEDGER`) if their
-  outputs get merged, otherwise their ids will collide.
+  them all at one ledger with `--ledger` if their outputs get merged, otherwise
+  their ids will collide.
 - **Quoting from a snippet instead of the page.** Evidence quotes must come
   from the extracted page text, not a search-result description — `web_extract`
   first, save the text, then `quote --from` that file.
