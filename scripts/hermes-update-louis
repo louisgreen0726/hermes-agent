@@ -69,6 +69,7 @@ candidate="local/louis-candidate-$(date +%Y%m%d%H%M%S)-$$"
 worktree="$(mktemp -d /tmp/hermes-louis-update.XXXXXX)"
 old_sha=""
 gateway_was_active=0
+dashboard_was_active=0
 mutated_dependencies=0
 activation_started=0
 activation_completed=0
@@ -186,8 +187,38 @@ EOF
   echo "Louis manager launcher installed: $launcher"
 }
 
+start_service_stable() {
+  local service="$1"
+  local label="$2"
+  local state pid stable_pid
+
+  echo "Starting $label from the validated Louis release..."
+  systemctl --user start "$service"
+  for _ in $(seq 1 60); do
+    state="$(systemctl --user is-active "$service" 2>/dev/null || true)"
+    pid="$(systemctl --user show "$service" -p MainPID --value 2>/dev/null || true)"
+    [[ "$state" == active && -n "$pid" && "$pid" != 0 ]] && break
+    sleep 2
+  done
+  [[ "$(systemctl --user is-active "$service")" == active ]] || {
+    echo "ERROR: $label failed to start."
+    return 5
+  }
+  stable_pid="$(systemctl --user show "$service" -p MainPID --value)"
+  sleep 10
+  [[ "$(systemctl --user is-active "$service")" == active \
+     && "$(systemctl --user show "$service" -p MainPID --value)" == "$stable_pid" ]] || {
+    echo "ERROR: $label failed the stability window."
+    return 5
+  }
+  echo "$label stable with PID $stable_pid."
+}
+
 rollback_activation() {
   echo "Rolling back to previous Louis release $old_sha..."
+  if [[ "$dashboard_was_active" -eq 1 ]]; then
+    systemctl --user stop hermes-dashboard.service >/dev/null 2>&1 || true
+  fi
   if [[ "$gateway_was_active" -eq 1 ]]; then
     systemctl --user stop hermes-gateway.service >/dev/null 2>&1 || true
   fi
@@ -207,7 +238,7 @@ cleanup() {
     if rollback_activation; then
       mutated_dependencies=0
     else
-      echo "ERROR: automatic rollback failed. Gateway remains stopped."
+      echo "ERROR: automatic rollback failed. Managed services remain stopped."
     fi
   fi
   git -C "$REPO" worktree remove --force "$worktree" >/dev/null 2>&1 || true
@@ -216,6 +247,9 @@ cleanup() {
   if (( rc != 0 )); then
     if [[ "$MODE" == worker && "$gateway_was_active" -eq 1 && "$mutated_dependencies" -eq 0 ]]; then
       systemctl --user start hermes-gateway.service >/dev/null 2>&1 || true
+    fi
+    if [[ "$MODE" == worker && "$dashboard_was_active" -eq 1 && "$mutated_dependencies" -eq 0 ]]; then
+      systemctl --user start hermes-dashboard.service >/dev/null 2>&1 || true
     fi
     echo "FAILED (exit $rc). Log: $LOG_FILE"
   fi
@@ -269,7 +303,7 @@ load_candidate_test_paths "$worktree" || exit 4
 echo "Running Louis regression suite against candidate source..."
 (cd "$worktree" && scripts/run_tests.sh "${TEST_PATHS[@]}" -q)
 if [[ "$MODE" == dry-run ]]; then
-  echo "DRY RUN COMPLETE: production, dependencies, and gateway were not changed."
+  echo "DRY RUN COMPLETE: production, dependencies, Gateway, and Dashboard were not changed."
   exit 0
 fi
 
@@ -288,8 +322,16 @@ if [[ "$(git -C "$REPO" rev-parse HEAD)" != "$old_sha" \
   exit 7
 fi
 
-if [[ "$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)" == active ]]; then
-  gateway_was_active=1
+gateway_state="$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)"
+dashboard_state="$(systemctl --user is-active hermes-dashboard.service 2>/dev/null || true)"
+[[ "$gateway_state" == active ]] && gateway_was_active=1
+[[ "$dashboard_state" == active ]] && dashboard_was_active=1
+
+if [[ "$dashboard_was_active" -eq 1 ]]; then
+  echo "Stopping Dashboard while dependencies and checkout are activated..."
+  systemctl --user stop hermes-dashboard.service
+fi
+if [[ "$gateway_was_active" -eq 1 ]]; then
   echo "Stopping Gateway while dependencies and checkout are activated..."
   systemctl --user stop hermes-gateway.service
 fi
@@ -305,7 +347,7 @@ echo "Re-running Louis regression suite with activated dependencies..."
 if [[ "$(git -C "$REPO" rev-parse HEAD)" != "$old_sha" \
    || -n "$(git -C "$REPO" status --porcelain)" \
    || "$(git -C "$REPO" rev-parse "$REMOTE/$BRANCH")" != "$target_sha" ]]; then
-  echo "ERROR: repository changed during post-install validation. Gateway remains stopped."
+  echo "ERROR: repository changed during post-install validation. Managed services remain stopped."
   exit 7
 fi
 
@@ -320,28 +362,14 @@ fi
 echo "Running non-network runtime smoke checks..."
 verify_runtime_smoke "$REPO"
 [[ -z "$(git -C "$REPO" status --porcelain)" ]] || {
-  echo "ERROR: activation dirtied production. Gateway remains stopped."; exit 8;
+  echo "ERROR: activation dirtied production. Managed services remain stopped."; exit 8;
 }
 
 if [[ "$gateway_was_active" -eq 1 ]]; then
-  echo "Starting Gateway from the validated Louis release..."
-  systemctl --user start hermes-gateway.service
-  for _ in $(seq 1 60); do
-    state="$(systemctl --user is-active hermes-gateway.service 2>/dev/null || true)"
-    pid="$(systemctl --user show hermes-gateway.service -p MainPID --value 2>/dev/null || true)"
-    [[ "$state" == active && -n "$pid" && "$pid" != 0 ]] && break
-    sleep 2
-  done
-  [[ "$(systemctl --user is-active hermes-gateway.service)" == active ]] || {
-    echo "ERROR: Gateway failed to start."; exit 5;
-  }
-  stable_pid="$(systemctl --user show hermes-gateway.service -p MainPID --value)"
-  sleep 10
-  [[ "$(systemctl --user is-active hermes-gateway.service)" == active \
-     && "$(systemctl --user show hermes-gateway.service -p MainPID --value)" == "$stable_pid" ]] || {
-    echo "ERROR: Gateway failed the stability window."; exit 5;
-  }
-  echo "Gateway stable with PID $stable_pid."
+  start_service_stable hermes-gateway.service Gateway
+fi
+if [[ "$dashboard_was_active" -eq 1 ]]; then
+  start_service_stable hermes-dashboard.service Dashboard
 fi
 
 printf 'updated_at=%s\nprevious_commit=%s\ntarget_commit=%s\nbackup_bundle=%s\nlog=%s\n' \

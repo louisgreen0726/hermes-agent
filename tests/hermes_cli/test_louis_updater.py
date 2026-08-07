@@ -247,14 +247,26 @@ exec "$HERMES_TEST_REAL_GIT" \
     assert expected_error in output
 
 
-def test_old_updater_uses_candidate_manifest_and_installs_manage_launcher(tmp_path):
+@pytest.mark.parametrize("dashboard_active", [True, False])
+def test_old_updater_uses_candidate_manifest_and_installs_manage_launcher(
+    tmp_path, dashboard_active
+):
     production, remote, _old_sha, target_sha = _init_release_repo(tmp_path)
     fake_bin = tmp_path / "bin"
     command_dir = tmp_path / "commands"
     editable_marker = tmp_path / "editable-source"
     hermes_calls = tmp_path / "hermes-calls"
+    service_states = tmp_path / "service-states"
+    service_events = tmp_path / "service-events"
     test_runs = tmp_path / "test-runs"
     editable_marker.write_text(f"{production}\n", encoding="utf-8")
+    service_states.mkdir()
+    (service_states / "hermes-gateway.service").write_text(
+        "active\n", encoding="utf-8"
+    )
+    (service_states / "hermes-dashboard.service").write_text(
+        "active\n" if dashboard_active else "inactive\n", encoding="utf-8"
+    )
 
     _write_executable(
         production / "venv" / "bin" / "python",
@@ -311,14 +323,41 @@ exec "$HERMES_TEST_REAL_GIT" \
         fake_bin / "systemctl",
         """#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == is-active ]]; then
-  printf 'inactive\n'
-  exit 3
-fi
-echo "unexpected systemctl action: $*" >&2
-exit 64
+action="${2:-}"
+service="${3:-}"
+state_file="$HERMES_TEST_SERVICE_STATES/$service"
+case "$action" in
+  is-active)
+    state="$(cat "$state_file")"
+    printf '%s\n' "$state"
+    [[ "$state" == active ]]
+    ;;
+  stop)
+    head="$($HERMES_TEST_REAL_GIT -C "$HERMES_REPO" rev-parse HEAD)"
+    printf 'stop:%s:%s\n' "$service" "$head" >> "$HERMES_TEST_SERVICE_EVENTS"
+    printf 'inactive\n' > "$state_file"
+    ;;
+  start)
+    head="$($HERMES_TEST_REAL_GIT -C "$HERMES_REPO" rev-parse HEAD)"
+    printf 'start:%s:%s\n' "$service" "$head" >> "$HERMES_TEST_SERVICE_EVENTS"
+    printf 'active\n' > "$state_file"
+    ;;
+  show)
+    [[ "$(cat "$state_file")" == active ]] || { printf '0\n'; exit 0; }
+    if [[ "$service" == hermes-gateway.service ]]; then
+      printf '4242\n'
+    else
+      printf '4343\n'
+    fi
+    ;;
+  *)
+    echo "unexpected systemctl action: $*" >&2
+    exit 64
+    ;;
+esac
 """,
     )
+    _write_executable(fake_bin / "sleep", "#!/bin/sh\nexit 0\n")
 
     env = _base_env(tmp_path, production)
     env.update({
@@ -329,6 +368,8 @@ exit 64
         "HERMES_TEST_REAL_GIT": GIT,
         "HERMES_TEST_REMOTE_URL": f"file://{remote}/",
         "HERMES_TEST_RUNS": str(test_runs),
+        "HERMES_TEST_SERVICE_EVENTS": str(service_events),
+        "HERMES_TEST_SERVICE_STATES": str(service_states),
         "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
         "UV_BIN": str(fake_bin / "uv"),
     })
@@ -353,6 +394,22 @@ exit 64
         "tests/candidate_gate.py -q",
         "tests/candidate_gate.py -q",
     ]
+    expected_service_events = [
+        f"stop:hermes-gateway.service:{_old_sha}",
+        f"start:hermes-gateway.service:{target_sha}",
+    ]
+    if dashboard_active:
+        expected_service_events.insert(
+            0, f"stop:hermes-dashboard.service:{_old_sha}"
+        )
+        expected_service_events.append(
+            f"start:hermes-dashboard.service:{target_sha}"
+        )
+    assert service_events.read_text(
+        encoding="utf-8"
+    ).splitlines() == expected_service_events
+    assert "Gateway stable with PID 4242." in output
+    assert ("Dashboard stable with PID 4343." in output) is dashboard_active
 
     launched = subprocess.run(
         [str(launcher), "--check"],
@@ -459,15 +516,17 @@ exec "$HERMES_TEST_REAL_GIT" \
     assert hermes_calls.read_text(encoding="utf-8").splitlines()[-1] == "manage --check"
 
 
-def test_gateway_activation_failure_restores_previous_release(tmp_path):
+def test_managed_service_activation_failure_restores_previous_release(tmp_path):
     production, remote, old_sha, target_sha = _init_release_repo(tmp_path)
     fake_bin = tmp_path / "bin"
     editable_marker = tmp_path / "editable-source"
-    gateway_state = tmp_path / "gateway-state"
-    gateway_events = tmp_path / "gateway-events"
+    service_states = tmp_path / "service-states"
+    service_events = tmp_path / "service-events"
     test_runs = tmp_path / "test-runs"
     editable_marker.write_text(f"{production}\n", encoding="utf-8")
-    gateway_state.write_text("active\n", encoding="utf-8")
+    service_states.mkdir()
+    for service in ("hermes-gateway.service", "hermes-dashboard.service"):
+        (service_states / service).write_text("active\n", encoding="utf-8")
 
     _write_executable(
         production / "venv" / "bin" / "python",
@@ -519,28 +578,35 @@ exec "$HERMES_TEST_REAL_GIT" \
         """#!/usr/bin/env bash
 set -euo pipefail
 action="${2:-}"
+service="${3:-}"
+state_file="$HERMES_TEST_SERVICE_STATES/$service"
 case "$action" in
   is-active)
-    state="$(cat "$HERMES_TEST_GATEWAY_STATE")"
+    state="$(cat "$state_file")"
     printf '%s\n' "$state"
     [[ "$state" == active ]]
     ;;
   stop)
     head="$($HERMES_TEST_REAL_GIT -C "$HERMES_REPO" rev-parse HEAD)"
-    printf 'stop:%s\n' "$head" >> "$HERMES_TEST_GATEWAY_EVENTS"
-    printf 'inactive\n' > "$HERMES_TEST_GATEWAY_STATE"
+    printf 'stop:%s:%s\n' "$service" "$head" >> "$HERMES_TEST_SERVICE_EVENTS"
+    printf 'inactive\n' > "$state_file"
     ;;
   start)
     head="$($HERMES_TEST_REAL_GIT -C "$HERMES_REPO" rev-parse HEAD)"
-    printf 'start:%s\n' "$head" >> "$HERMES_TEST_GATEWAY_EVENTS"
-    if [[ "$head" != "$HERMES_TEST_OLD_SHA" ]]; then
+    printf 'start:%s:%s\n' "$service" "$head" >> "$HERMES_TEST_SERVICE_EVENTS"
+    if [[ "$service" == hermes-dashboard.service \
+       && "$head" != "$HERMES_TEST_OLD_SHA" ]]; then
       exit 55
     fi
-    printf 'active\n' > "$HERMES_TEST_GATEWAY_STATE"
+    printf 'active\n' > "$state_file"
     ;;
   show)
-    if [[ "$(cat "$HERMES_TEST_GATEWAY_STATE")" == active ]]; then
-      printf '4242\n'
+    if [[ "$(cat "$state_file")" == active ]]; then
+      if [[ "$service" == hermes-gateway.service ]]; then
+        printf '4242\n'
+      else
+        printf '4343\n'
+      fi
     else
       printf '0\n'
     fi
@@ -552,17 +618,18 @@ case "$action" in
 esac
 """,
     )
+    _write_executable(fake_bin / "sleep", "#!/bin/sh\nexit 0\n")
 
     env = _base_env(tmp_path, production)
     env.update({
         "HERMES_TEST_EDITABLE": str(editable_marker),
-        "HERMES_TEST_GATEWAY_EVENTS": str(gateway_events),
-        "HERMES_TEST_GATEWAY_STATE": str(gateway_state),
         "HERMES_TEST_LOUIS_ORIGIN": LOUIS_ORIGIN,
         "HERMES_TEST_OLD_SHA": old_sha,
         "HERMES_TEST_REAL_GIT": GIT,
         "HERMES_TEST_REMOTE_URL": f"file://{remote}/",
         "HERMES_TEST_RUNS": str(test_runs),
+        "HERMES_TEST_SERVICE_EVENTS": str(service_events),
+        "HERMES_TEST_SERVICE_STATES": str(service_states),
         "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
         "UV_BIN": str(fake_bin / "uv"),
     })
@@ -582,12 +649,21 @@ esac
     assert _git(production, "rev-parse", "HEAD") == old_sha
     assert _git(production, "status", "--porcelain") == ""
     assert editable_marker.read_text(encoding="utf-8").strip() == str(production)
-    assert gateway_state.read_text(encoding="utf-8").strip() == "active"
-    assert gateway_events.read_text(encoding="utf-8").splitlines() == [
-        f"stop:{old_sha}",
-        f"start:{target_sha}",
-        f"stop:{target_sha}",
-        f"start:{old_sha}",
+    assert (service_states / "hermes-gateway.service").read_text(
+        encoding="utf-8"
+    ).strip() == "active"
+    assert (service_states / "hermes-dashboard.service").read_text(
+        encoding="utf-8"
+    ).strip() == "active"
+    assert service_events.read_text(encoding="utf-8").splitlines() == [
+        f"stop:hermes-dashboard.service:{old_sha}",
+        f"stop:hermes-gateway.service:{old_sha}",
+        f"start:hermes-gateway.service:{target_sha}",
+        f"start:hermes-dashboard.service:{target_sha}",
+        f"stop:hermes-dashboard.service:{target_sha}",
+        f"stop:hermes-gateway.service:{target_sha}",
+        f"start:hermes-gateway.service:{old_sha}",
+        f"start:hermes-dashboard.service:{old_sha}",
     ]
     assert "Rollback restored source and Python environment." in output
     assert "FAILED (exit 55)." in output

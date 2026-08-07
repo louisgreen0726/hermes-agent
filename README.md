@@ -105,7 +105,7 @@ Louis-specific work currently includes:
 - Provider grouping plus isolated catalogs, caches, credentials, transport,
   fallback, and session routing for named providers sharing one relay endpoint.
 - Candidate-owned update validation, regression gates, rollback protection,
-  and Gateway-safe restart handling.
+  and safe restart handling for running Gateway and Dashboard services.
 - WebDAV backup and restore with per-device retention and scheduled execution.
 - A Simplified Chinese dashboard, localized configuration metadata, and Louis
   dashboard themes.

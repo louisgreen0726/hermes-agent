@@ -27,9 +27,10 @@ source. It is not an official Nous Research release.
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
   [release-notes index](LOUIS_RELEASE_NOTES.md).
-- The protected update and Gateway restart workflow has been exercised on the
-  production installation. This document intentionally does not pin a
-  deployment SHA, which would become stale after the next update.
+- The protected updater restores any Gateway and Dashboard services that were
+  running before activation, after the validated release is in place. This
+  document intentionally does not pin a deployment SHA, which would become
+  stale after the next update.
 
 ## Release policy
 
@@ -134,7 +135,7 @@ and ambiguous groups, and creates a mode-`0600` backup before any write.
 
 ## Updating
 
-Production machines use `hermes-update-louis`. The updater validates `origin/main` in an isolated worktree, loads the regression manifest from that candidate, runs the suite, updates dependencies, verifies the candidate again, activates the validated commit, and restarts the gateway only after integrity checks pass. Candidate manifest entries are restricted to existing test files inside the candidate worktree.
+Production machines use `hermes-update-louis`. The updater validates `origin/main` in an isolated worktree, loads the regression manifest from that candidate, runs the suite, updates dependencies, verifies the candidate again, activates the validated commit, and restarts any previously running Gateway and Dashboard services only after integrity checks pass. Candidate manifest entries are restricted to existing test files inside the candidate worktree.
 
 Before a newly activated release is accepted, the updater verifies the editable
 source, imports both the CLI and Gateway runtime, and checks the Louis version
@@ -142,7 +143,7 @@ command without making a model API request. The same smoke check runs when the
 checkout is already current, so a broken editable install is not reported as
 healthy merely because no Git update is available.
 
-The gateway launches updates in an independent transient user service so the updater survives the intentional Gateway stop/restart window. Progress and the final exit code are delivered through durable marker files.
+The gateway launches updates in an independent transient user service so the updater survives the intentional Gateway and Dashboard stop/restart window. Progress and the final exit code are delivered through durable marker files.
 
 Do not use `git pull upstream main` on a production checkout.
 
