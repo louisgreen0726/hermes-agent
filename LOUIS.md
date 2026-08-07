@@ -7,9 +7,9 @@ independently maintained derivative of Hermes Agent.
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.20.0.1`
-- Python package version: `0.20.0+Louis.1`
-- Desktop package version: `0.20.0-louis.1`
+- User-facing version: `Louis-0.20.0.2`
+- Python package version: `0.20.0+Louis.2`
+- Desktop package version: `0.20.0-louis.2`
 - Selectively integrated upstream baseline: Hermes Agent `0.20.0`
   (`2026.8.3`)
 - Source project: `https://github.com/NousResearch/hermes-agent`
@@ -22,7 +22,7 @@ source. It is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.20.0.1` (released 2026-08-07).
+- The versioned baseline is `Louis-0.20.0.2` (released 2026-08-07).
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -39,7 +39,7 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.20.0.1 baseline carries:
+The versioned 0.20.0.2 baseline carries:
 
 - Telegram Native Guest Mode.
 - Native Rich Markdown table delivery in Telegram Guest Mode.
@@ -55,6 +55,9 @@ The versioned 0.20.0.1 baseline carries:
   environments.
 - Named custom-provider activation that preserves the provider-owned Responses,
   Chat Completions, or Anthropic transport at runtime.
+- Complete same-relay isolation for named custom providers across model lists,
+  context metadata, disk caches, credentials, headers, request options, model
+  switching, fallback, and session restoration.
 - Candidate-owned protected-update test gates, strict manifest validation, and
   non-network runtime smoke checks before a release is accepted as healthy.
 - Version-aware custom `User-Agent` headers and synchronized Python, CLI, and
@@ -159,6 +162,7 @@ edit, but the impact review is still mandatory. The detailed checklist lives in
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.20.0.2](docs/releases/LOUIS_0.20.0.2.md)
 - [Louis Hermes Agent 0.20.0.1](docs/releases/LOUIS_0.20.0.1.md)
 - [Louis Hermes Agent 0.19.0.4](docs/releases/LOUIS_0.19.0.4.md)
 - [Louis Hermes Agent 0.19.0.3](docs/releases/LOUIS_0.19.0.3.md)

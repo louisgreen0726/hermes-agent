@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.1-2563eb" alt="Stable release: Louis-0.20.0.1"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.2-2563eb" alt="Stable release: Louis-0.20.0.2"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT License"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis project issues"></a>
 </p>
@@ -69,16 +69,16 @@ official Nous Research release.
 | --- | --- |
 | Maintenance | Active, independently maintained |
 | Production branch | `main` |
-| Stable baseline | [`Louis-0.20.0.1`](docs/releases/LOUIS_0.20.0.1.md) |
-| Python package version | `0.20.0+Louis.1` |
+| Stable baseline | [`Louis-0.20.0.2`](docs/releases/LOUIS_0.20.0.2.md) |
+| Python package version | `0.20.0+Louis.2` |
 | Selective upstream baseline | Hermes Agent `0.20.0` / `2026.8.3` |
-| Current `main` | `Louis-0.20.0.1` stable baseline |
+| Current `main` | `Louis-0.20.0.2` stable baseline |
 | Upstream relationship | Selective review and backporting only |
 | Automatic updates | Louis `origin/main` only |
 
-Named custom providers can share one relay URL while retaining separate API
-keys, models, API modes, and credential pools; this identity contract is part
-of the stable baseline.
+Named custom providers can share one relay URL while retaining separate model
+lists, caches, API keys, API modes, headers, request options, and credential
+pools; model switching and restored sessions preserve that identity.
 
 Release history and pending changes are tracked in
 [`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) and
@@ -102,8 +102,8 @@ Louis-specific work currently includes:
 - Telegram Native Guest Mode and rich Markdown/CJK delivery.
 - A native management center for models, providers, Gateway services,
   diagnostics, logs, backups, and protected updates.
-- Provider grouping, API-mode preservation, and isolated credentials for named
-  custom providers sharing one relay endpoint.
+- Provider grouping plus isolated catalogs, caches, credentials, transport,
+  fallback, and session routing for named providers sharing one relay endpoint.
 - Candidate-owned update validation, regression gates, rollback protection,
   and Gateway-safe restart handling.
 - WebDAV backup and restore with per-device retention and scheduled execution.
