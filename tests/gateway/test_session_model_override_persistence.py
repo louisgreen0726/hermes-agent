@@ -29,10 +29,11 @@ from gateway.session import (
 
 OVERRIDE = {
     "model": "gpt-5o",
-    "provider": "openai",
+    "provider": "custom",
+    "requested_provider": "custom:relay-b",
     "api_key": "sk-SUPER-SECRET-do-not-persist",
-    "base_url": "https://api.openai.example/v1",
-    "api_mode": "responses",
+    "base_url": "https://relay.example/v1",
+    "api_mode": "chat_completions",
 }
 
 
@@ -81,8 +82,9 @@ def test_override_persists_and_survives_restart(store_factory, tmp_path):
     persisted = store2.get_model_override(session_key)
     assert persisted == {
         "model": "gpt-5o",
-        "provider": "openai",
-        "base_url": "https://api.openai.example/v1",
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "base_url": "https://relay.example/v1",
     }
 
 
@@ -98,7 +100,12 @@ def test_api_key_never_serialized(store_factory, tmp_path):
     # api_mode is re-derived from provider resolution; not persisted either.
     data = json.loads(raw)
     stored = data[entry.session_key]["model_override"]
-    assert set(stored) == {"model", "provider", "base_url"}
+    assert set(stored) == {
+        "model",
+        "provider",
+        "requested_provider",
+        "base_url",
+    }
 
 
 def test_from_dict_strips_api_key_from_tampered_json():
@@ -111,13 +118,18 @@ def test_from_dict_strips_api_key_from_tampered_json():
             "updated_at": "2026-01-01T00:00:00",
             "model_override": {
                 "model": "m1",
-                "provider": "p1",
+                "provider": "custom",
+                "requested_provider": "custom:relay-b",
                 "api_key": "sk-injected",
                 "api_mode": "chat_completions",
             },
         }
     )
-    assert store_entry.model_override == {"model": "m1", "provider": "p1"}
+    assert store_entry.model_override == {
+        "model": "m1",
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+    }
 
 
 def test_new_clears_persisted_override(store_factory, tmp_path):
@@ -162,20 +174,27 @@ def test_runner_rehydrates_override_after_restart(store_factory):
         "gateway.run._resolve_runtime_agent_kwargs_for_provider",
         return_value={
             "api_key": "sk-fresh-from-keychain",
-            "api_mode": "responses",
-            "base_url": "https://api.openai.example/v1",
-            "provider": "openai",
+            "api_mode": "chat_completions",
+            "base_url": "https://relay.example/v1",
+            "provider": "custom",
+            "requested_provider": "custom:relay-b",
+            "request_overrides": {"extra_body": {"tenant": "relay-b"}},
         },
-    ):
+    ) as resolve:
         runner._rehydrate_session_model_override(session_key)
 
+    resolve.assert_called_once_with("custom:relay-b")
     override = runner._session_model_overrides[session_key]
     assert override["model"] == "gpt-5o"
-    assert override["provider"] == "openai"
-    assert override["base_url"] == "https://api.openai.example/v1"
+    assert override["provider"] == "custom"
+    assert override["requested_provider"] == "custom:relay-b"
+    assert override["base_url"] == "https://relay.example/v1"
     # Credentials come from live resolution, never from disk.
     assert override["api_key"] == "sk-fresh-from-keychain"
-    assert override["api_mode"] == "responses"
+    assert override["api_mode"] == "chat_completions"
+    assert override["request_overrides"] == {
+        "extra_body": {"tenant": "relay-b"}
+    }
 
 
 def test_runner_rehydrate_keeps_live_override(store_factory):
@@ -229,6 +248,7 @@ def test_sanitize_model_override():
     assert sanitize_model_override({"api_key": "sk-x", "api_mode": "chat"}) is None
     assert sanitize_model_override(OVERRIDE) == {
         "model": "gpt-5o",
-        "provider": "openai",
-        "base_url": "https://api.openai.example/v1",
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "base_url": "https://relay.example/v1",
     }

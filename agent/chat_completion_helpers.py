@@ -33,6 +33,7 @@ from agent.errors import EmptyStreamError
 from agent.turn_context import substitute_api_content
 from agent.gemini_native_adapter import is_native_gemini_base_url
 from agent.model_metadata import is_local_endpoint
+from agent.context_engine import update_context_engine_model
 from agent.message_content import flatten_message_text
 from agent.message_sanitization import (
     _sanitize_surrogates,
@@ -1517,20 +1518,24 @@ def _fallback_entry_key(fb: dict) -> tuple[str, str, str]:
 def _fallback_entry_is_same_backend_by_base_url(
     *,
     current_provider: str,
+    current_requested_provider: str,
     fb_provider: str,
     current_base_url: str,
     fb_base_url: str,
     current_model: str,
     fb_model: str,
+    current_api_key: Any = None,
+    fb_api_key: Any = None,
 ) -> bool:
-    """True when base_url+model identity means the fallback is the same backend.
+    """True when endpoint, model, and credential identify the same backend.
 
     Issue #22548: two ``custom_providers`` aliases that point at the same shim
-    URL with the same model must be skipped, or failover loops on the dead
-    backend.  First-class providers that share a host while using different
-    auth (``xai-oauth`` vs ``xai``, ``openai-codex`` vs ``openai-api``) are
-    distinct credential surfaces — skipping them strands configured failover
-    when primary and fallback reuse the same model slug on that host.
+    URL with the same model and credential must be skipped, or failover loops
+    on the dead backend. Named custom siblings with different API keys are
+    distinct credential surfaces even when URL and model are identical.
+    First-class providers that share a host while using different auth
+    (``xai-oauth`` vs ``xai``, ``openai-codex`` vs ``openai-api``) are also
+    distinct credential surfaces.
     """
     if not (
         fb_base_url
@@ -1539,7 +1544,10 @@ def _fallback_entry_is_same_backend_by_base_url(
         and fb_model == current_model
     ):
         return False
-    if fb_provider == current_provider:
+    current_identity = (
+        current_requested_provider or current_provider
+    ).strip().lower()
+    if fb_provider in {current_provider, current_identity}:
         return True
     try:
         from hermes_cli.auth import PROVIDER_REGISTRY
@@ -1547,6 +1555,29 @@ def _fallback_entry_is_same_backend_by_base_url(
         # Both sides are registered first-class providers → different auth
         # identities even when the inference host matches. Allow failover.
         if current_provider in PROVIDER_REGISTRY and fb_provider in PROVIDER_REGISTRY:
+            return False
+    except Exception:
+        pass
+
+    # The fallback client has already resolved named-provider config and env
+    # references at this point. Compare credentials only in memory; neither
+    # value is logged or placed in a cache key. Two configured named custom
+    # routes with known, different keys are independent quota/model surfaces.
+    # Arbitrary aliases and unknown credentials retain the conservative
+    # #22548 dedup because URL+model is the only durable identity they carry.
+    try:
+        from hermes_cli.runtime_provider import has_named_custom_provider
+
+        distinct_named_custom_credentials = (
+            has_named_custom_provider(current_identity)
+            and has_named_custom_provider(fb_provider)
+            and isinstance(current_api_key, str)
+            and bool(current_api_key)
+            and isinstance(fb_api_key, str)
+            and bool(fb_api_key)
+            and current_api_key != fb_api_key
+        )
+        if distinct_named_custom_credentials:
             return False
     except Exception:
         pass
@@ -1645,26 +1676,19 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
     # first-class providers that share a host (xai-oauth vs xai) as the same
     # backend — they use different credentials.
     current_provider = (getattr(agent, "provider", "") or "").strip().lower()
+    current_requested_provider = (
+        getattr(agent, "requested_provider", "") or current_provider
+    ).strip().lower()
     current_model = (getattr(agent, "model", "") or "").strip()
     current_base_url = str(getattr(agent, "base_url", "") or "").rstrip("/").lower()
-    fb_base_url_for_dedup = (fb.get("base_url") or "").strip().rstrip("/").lower()
-    if fb_provider == current_provider and fb_model == current_model:
+    same_route = fb_provider == current_requested_provider or (
+        current_requested_provider in {"", "auto"}
+        and fb_provider == current_provider
+    )
+    if same_route and fb_model == current_model:
         logger.warning(
             "Fallback skip: chain entry %s/%s matches current provider/model",
             fb_provider, fb_model,
-        )
-        return agent._try_activate_fallback(reason)
-    if _fallback_entry_is_same_backend_by_base_url(
-        current_provider=current_provider,
-        fb_provider=fb_provider,
-        current_base_url=current_base_url,
-        fb_base_url=fb_base_url_for_dedup,
-        current_model=current_model,
-        fb_model=fb_model,
-    ):
-        logger.warning(
-            "Fallback skip: chain entry base_url %s matches current backend",
-            fb_base_url_for_dedup,
         )
         return agent._try_activate_fallback(reason)
 
@@ -1708,6 +1732,36 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
                 "Could not normalize fallback model %r for provider %r: %s",
                 fb_model, fb_provider, _norm_err,
             )
+
+        fb_base_url_for_dedup = str(
+            fb_base_url_hint or fb_client.base_url
+        ).rstrip("/").lower()
+        if _fallback_entry_is_same_backend_by_base_url(
+            current_provider=current_provider,
+            current_requested_provider=current_requested_provider,
+            fb_provider=fb_provider,
+            current_base_url=current_base_url,
+            fb_base_url=fb_base_url_for_dedup,
+            current_model=current_model,
+            fb_model=fb_model,
+            current_api_key=getattr(agent, "api_key", None),
+            fb_api_key=getattr(fb_client, "api_key", None),
+        ):
+            logger.warning(
+                "Fallback skip: chain entry base_url %s matches current backend",
+                fb_base_url_for_dedup,
+            )
+            return agent._try_activate_fallback(reason)
+
+        resolved_fb_provider = fb_provider
+        try:
+            from hermes_cli.runtime_provider import has_named_custom_provider
+
+            if has_named_custom_provider(fb_provider):
+                resolved_fb_provider = "custom"
+        except Exception:
+            if fb_provider.startswith("custom:"):
+                resolved_fb_provider = "custom"
 
         # Determine api_mode from provider / base URL / model
         fb_api_mode = "chat_completions"
@@ -1755,13 +1809,26 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
         # the stale value from the previous model.  See #22387.
         agent._config_context_length = None
         agent.model = fb_model
-        agent.provider = fb_provider
+        agent.provider = resolved_fb_provider
         agent.requested_provider = fb_provider
         agent.base_url = fb_base_url
         agent.api_mode = fb_api_mode
         if hasattr(agent, "_transport_cache"):
             agent._transport_cache.clear()
         agent._fallback_activated = True
+
+        try:
+            from agent.agent_init import _refresh_custom_provider_extra_body
+
+            _refresh_custom_provider_extra_body(
+                agent,
+                getattr(agent, "_custom_providers", None) or [],
+            )
+        except Exception:
+            logger.debug(
+                "custom-provider extra_body refresh skipped on fallback",
+                exc_info=True,
+            )
 
         # Rebind the credential pool to the fallback provider when the provider
         # changes.  Keeping the primary pool attached would make downstream
@@ -1775,8 +1842,17 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
         # so provider-specific rotation continues to work after the switch.
         _existing_pool = getattr(agent, "_credential_pool", None)
         if _existing_pool is not None:
-            _pool_provider = (getattr(_existing_pool, "provider", "") or "").strip().lower()
-            if _pool_provider and _pool_provider != fb_provider:
+            from agent.credential_pool import credential_pool_matches_provider
+
+            _pool_provider = (
+                getattr(_existing_pool, "provider", "") or ""
+            ).strip().lower()
+            if not credential_pool_matches_provider(
+                _existing_pool,
+                resolved_fb_provider,
+                base_url=fb_base_url,
+                requested_provider=fb_provider,
+            ):
                 logger.info(
                     "Fallback to %s/%s: clearing primary credential pool "
                     "(pool_provider=%s) to prevent cross-provider contamination",
@@ -1788,7 +1864,12 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
             try:
                 from agent.credential_pool import load_pool
 
-                fallback_pool = load_pool(fb_provider)
+                pool_provider = (
+                    fb_provider
+                    if fb_provider not in {"", "auto", "custom"}
+                    else resolved_fb_provider
+                )
+                fallback_pool = load_pool(pool_provider)
                 if fallback_pool and fallback_pool.has_credentials():
                     agent._credential_pool = fallback_pool
                     logger.info(
@@ -1852,7 +1933,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
         # Re-evaluate prompt caching for the new provider/model
         agent._use_prompt_caching, agent._use_native_cache_layout = (
             agent._anthropic_prompt_cache_policy(
-                provider=fb_provider,
+                provider=resolved_fb_provider,
                 base_url=fb_base_url,
                 api_mode=fb_api_mode,
                 model=fb_model,
@@ -1879,16 +1960,19 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
             fb_context_length = get_model_context_length(
                 agent.model, base_url=agent.base_url,
                 api_key=_fb_ctx_api_key, provider=agent.provider,
+                requested_provider=agent.requested_provider,
                 config_context_length=getattr(agent, "_config_context_length", None),
                 custom_providers=getattr(agent, "_custom_providers", None),
             )
-            agent.context_compressor.update_model(
+            update_context_engine_model(
+                agent.context_compressor,
                 model=agent.model,
                 context_length=fb_context_length,
                 base_url=agent.base_url,
                 api_key=getattr(agent, "api_key", ""),  # callable preserved → call_llm
                 provider=agent.provider,
                 api_mode=agent.api_mode,
+                requested_provider=getattr(agent, "requested_provider", None),
             )
 
         # Re-resolve reasoning_config for the new fallback model (Closes #21256).

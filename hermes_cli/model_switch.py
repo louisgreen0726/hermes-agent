@@ -240,7 +240,8 @@ def _resolve_grouped_custom_provider(
             {"name": group_name, "entries": []},
         )
         group["entries"].append(entry)
-        concrete_slug = custom_provider_slug(raw_name).lower()
+        concrete_identity = str(entry.get("provider_key") or raw_name)
+        concrete_slug = custom_provider_slug(concrete_identity).lower()
         first_group_by_concrete_slug.setdefault(concrete_slug, group_key)
 
     used_slugs: set[str] = set()
@@ -299,24 +300,37 @@ def _resolve_grouped_custom_provider(
         chosen_entry = group["entries"][0]
         configured_model = selected_model
 
-    concrete_slug = custom_provider_slug(str(chosen_entry.get("name") or ""))
+    concrete_slug = custom_provider_slug(
+        str(
+            chosen_entry.get("provider_key")
+            or chosen_entry.get("name")
+            or ""
+        )
+    )
     if first_group_by_concrete_slug.get(concrete_slug.lower()) != selected_group_key:
         return None
     return concrete_slug, str(group["name"]), configured_model
 
 
 def _save_discovered_models_to_config(
-    api_url: str, model_ids: list[str]
+    api_url: str,
+    model_ids: list[str],
+    *,
+    provider_names: Optional[List[str]] = None,
+    provider_keys: Optional[List[str]] = None,
 ) -> None:
-    """Persist discovered models into ``custom_providers`` in config.yaml.
+    """Persist discovered models into either custom-provider config schema.
 
     Called after a successful ``/v1/models`` probe so that the next read
     with ``discover_models: false`` uses the cached list instead of a stale
     or minimal manually-configured subset.
 
-    Matches entries by ``base_url`` (trailing-slash-normalised).  A failed
-    config write is swallowed — the picker still shows the live models for
-    this session.
+    Named providers are matched by mapping key/display identity and
+    ``base_url`` so providers sharing one relay do not overwrite each other's
+    entitlement-specific catalogs. URL-only matching remains for legacy
+    callers without a durable identity. Existing per-model metadata is kept
+    while newly discovered IDs are added. A failed write is non-fatal: the
+    picker still shows the live models for this session.
     """
     if not api_url or not model_ids:
         return
@@ -324,38 +338,109 @@ def _save_discovered_models_to_config(
         from hermes_cli.config import load_config, save_config
 
         cfg = load_config()
-        providers = cfg.get("custom_providers") or []
-        if not isinstance(providers, list):
+        norm_url = api_url.strip().rstrip("/").lower()
+        target_provider_slugs = {
+            custom_provider_slug(str(name)).casefold()
+            for name in [*(provider_names or []), *(provider_keys or [])]
+            if str(name or "").strip()
+        }
+        target_provider_keys = {
+            str(key).strip().casefold()
+            for key in (provider_keys or [])
+            if str(key or "").strip()
+        }
+
+        normalized_model_ids: list[str] = []
+        seen_model_ids: set[str] = set()
+        for model_id in model_ids:
+            candidate = str(model_id or "").strip()
+            lowered = candidate.casefold()
+            if candidate and lowered not in seen_model_ids:
+                normalized_model_ids.append(candidate)
+                seen_model_ids.add(lowered)
+        if not normalized_model_ids:
             return
 
-        norm_url = api_url.strip().rstrip("/").lower()
-        changed = False
-        for entry in providers:
-            if not isinstance(entry, dict):
-                continue
-            entry_url = (entry.get("base_url", "") or entry.get("url", "") or "").strip()
+        def _matches(entry: dict, *, mapping_key: str = "") -> bool:
+            entry_url = str(
+                entry.get("base_url", "")
+                or entry.get("api", "")
+                or entry.get("url", "")
+                or ""
+            ).strip()
             if entry_url.rstrip("/").lower() != norm_url:
-                continue
+                return False
+            if not target_provider_slugs and not target_provider_keys:
+                return True
+            if mapping_key and mapping_key.strip().casefold() in target_provider_keys:
+                return True
+            entry_identities = {
+                custom_provider_slug(str(value)).casefold()
+                for value in (
+                    mapping_key,
+                    entry.get("name"),
+                    entry.get("provider_key"),
+                )
+                if str(value or "").strip()
+            }
+            return bool(entry_identities & target_provider_slugs)
+
+        def _merge_models(entry: dict, *, prefer_mapping: bool) -> bool:
             existing = entry.get("models")
-            # Preserve per-model metadata: when ``models`` is a mapping
-            # (e.g. ``{"model-a": {"context_length": 8192}}``) or a list of
-            # dicts (e.g. ``[{"id": "model-a", "context_length": 8192}]``),
-            # the user has curated metadata per model — do not replace it.
             if isinstance(existing, dict):
-                continue
+                merged = dict(existing)
+                existing_ids = {str(model_id).casefold() for model_id in merged}
+                for model_id in normalized_model_ids:
+                    if model_id.casefold() not in existing_ids:
+                        merged[model_id] = {}
+                        existing_ids.add(model_id.casefold())
+                if merged == existing:
+                    return False
+                entry["models"] = merged
+                return True
             if isinstance(existing, list) and any(
-                isinstance(m, dict) for m in existing
+                isinstance(item, dict) for item in existing
             ):
-                continue
-            # Only update when models are stale — avoids unnecessary
-            # config writes on every picker open.
-            if isinstance(existing, list) and existing == model_ids:
-                continue
-            entry["models"] = model_ids
-            changed = True
+                merged = list(existing)
+                existing_ids = {
+                    model_id.casefold()
+                    for model_id in _declared_model_ids(existing)
+                }
+                for model_id in normalized_model_ids:
+                    if model_id.casefold() not in existing_ids:
+                        merged.append({"id": model_id})
+                        existing_ids.add(model_id.casefold())
+                if merged == existing:
+                    return False
+                entry["models"] = merged
+                return True
+
+            desired: Any
+            if prefer_mapping or isinstance(existing, dict):
+                desired = {model_id: {} for model_id in normalized_model_ids}
+            else:
+                desired = list(normalized_model_ids)
+            if existing == desired:
+                return False
+            entry["models"] = desired
+            return True
+
+        changed = False
+        legacy_providers = cfg.get("custom_providers")
+        if isinstance(legacy_providers, list):
+            for entry in legacy_providers:
+                if isinstance(entry, dict) and _matches(entry):
+                    changed = _merge_models(entry, prefer_mapping=False) or changed
+
+        keyed_providers = cfg.get("providers")
+        if isinstance(keyed_providers, dict):
+            for mapping_key, entry in keyed_providers.items():
+                if isinstance(entry, dict) and _matches(
+                    entry, mapping_key=str(mapping_key)
+                ):
+                    changed = _merge_models(entry, prefer_mapping=True) or changed
 
         if changed:
-            cfg["custom_providers"] = providers
             save_config(cfg)
     except Exception:
         pass
@@ -643,6 +728,8 @@ class ModelSwitchResult:
     success: bool
     new_model: str = ""
     target_provider: str = ""
+    runtime_provider: str = ""
+    requested_provider: str = ""
     provider_changed: bool = False
     api_key: str = ""
     base_url: str = ""
@@ -1039,6 +1126,7 @@ def resolve_display_context_length(
     provider: str,
     base_url: str = "",
     api_key: str = "",
+    requested_provider: str | None = None,
     model_info: Optional[ModelInfo] = None,
     custom_providers: list | None = None,
     config_context_length: int | None = None,
@@ -1075,7 +1163,7 @@ def resolve_display_context_length(
                 configured_base_url,
                 base_url,
                 configured_provider,
-                provider,
+                requested_provider or provider,
             ):
                 config_context_length = None
         except Exception:
@@ -1088,6 +1176,7 @@ def resolve_display_context_length(
             base_url=base_url or "",
             api_key=api_key or "",
             provider=provider or None,
+            requested_provider=requested_provider,
             custom_providers=custom_providers,
             config_context_length=config_context_length,
         )
@@ -1154,10 +1243,12 @@ def _configured_provider_matches(
         for entry in custom_providers:
             if not isinstance(entry, dict):
                 continue
-            name = entry.get("name")
-            if not isinstance(name, str) or not name.strip():
+            identity = str(
+                entry.get("provider_key") or entry.get("name") or ""
+            ).strip()
+            if not identity:
                 continue
-            slug = f"custom:{name}"
+            slug = custom_provider_slug(identity)
             if slug in matches:
                 continue
             for key in ("models", "model", "default_model"):
@@ -1595,6 +1686,8 @@ def switch_model(
     api_key = current_api_key
     base_url = current_base_url
     api_mode = ""
+    runtime = None
+    _user_pdef = None
 
     if provider_changed or explicit_provider:
         import os
@@ -1603,7 +1696,6 @@ def switch_model(
         # resolves by provider NAME and doesn't know user-config slugs (e.g. a
         # block named "openai"), so it would re-resolve from scratch and fail
         # or hop to an aggregator. Use the pdef's endpoint directly instead.
-        _user_pdef = None
         if explicit_provider and user_providers:
             from hermes_cli.providers import resolve_user_provider as _ruser
             _user_pdef = _ruser(explicit_provider.strip().lower(), user_providers)
@@ -1673,6 +1765,22 @@ def switch_model(
         except Exception:
             pass
 
+    # Keep the picker/menu identity separate from the provider class used by
+    # the live agent. Named custom routes resolve to ``provider=custom`` while
+    # retaining their concrete config key in ``requested_provider``. Without
+    # carrying both values through the switch result, in-place switches turn a
+    # canonical custom runtime into an unknown provider slug and later cache,
+    # credential-pool, header, and extra_body lookups lose their route scope.
+    runtime_provider = target_provider
+    requested_provider = target_provider
+    if isinstance(runtime, dict):
+        runtime_provider = str(runtime.get("provider") or target_provider)
+        requested_provider = str(
+            runtime.get("requested_provider") or target_provider
+        )
+    elif _user_pdef is not None or target_provider.startswith("custom:"):
+        runtime_provider = "custom"
+
     # --- Direct alias override: use exact base_url from the alias if set ---
     if resolved_alias:
         _ensure_direct_aliases()
@@ -1735,26 +1843,40 @@ def switch_model(
                     if new_model in _declared_model_ids(cfg.get("models", {})):
                         override = True
                         break
-        # Also check custom_providers list — models declared there should be accepted
-        # even if the remote /v1/models endpoint doesn't list them.
+        # Also check custom_providers list — models declared on the selected
+        # provider should be accepted even if its remote /v1/models endpoint
+        # doesn't list them. A named custom provider is authoritative: do not
+        # borrow a same-URL sibling's catalog and then call it with the wrong
+        # credential. Bare/legacy routes retain URL matching.
         if not override and custom_providers and isinstance(custom_providers, list):
+            target_provider_norm = str(target_provider or "").strip().casefold()
+            named_custom_target = target_provider_norm.startswith("custom:")
+            target_url = str(base_url or "").strip().rstrip("/").casefold()
             for entry in custom_providers:
                 if not isinstance(entry, dict):
                     continue
-                # Match by provider slug (custom:<name>) or by base_url
-                entry_name = entry.get("name", "")
-                entry_slug = f"custom:{entry_name}" if entry_name else ""
-                entry_url = entry.get("base_url", "")
-                if entry_slug == target_provider or entry_url == base_url:
-                    # Check if the requested model matches the entry's model
-                    entry_model = entry.get("model", "")
-                    entry_models = entry.get("models", {})
-                    if new_model == entry_model:
-                        override = True
-                        break
-                    if new_model in _declared_model_ids(entry_models):
-                        override = True
-                        break
+                if named_custom_target:
+                    entry_slugs = {
+                        custom_provider_slug(str(entry.get(key) or "")).casefold()
+                        for key in ("name", "provider_key")
+                        if str(entry.get(key) or "").strip()
+                    }
+                    if target_provider_norm not in entry_slugs:
+                        continue
+                else:
+                    entry_url = str(entry.get("base_url") or "").strip()
+                    if entry_url.rstrip("/").casefold() != target_url:
+                        continue
+
+                # Check if the requested model matches the selected entry.
+                entry_model = entry.get("model", "")
+                entry_models = entry.get("models", {})
+                if new_model == entry_model:
+                    override = True
+                    break
+                if new_model in _declared_model_ids(entry_models):
+                    override = True
+                    break
         if override:
             validation = {"accepted": True, "persist": True, "recognized": False, "message": validation.get("message", "")}
         else:
@@ -1818,6 +1940,8 @@ def switch_model(
         success=True,
         new_model=new_model,
         target_provider=target_provider,
+        runtime_provider=runtime_provider,
+        requested_provider=requested_provider,
         provider_changed=provider_changed,
         api_key=api_key,
         base_url=base_url,
@@ -2623,15 +2747,18 @@ def list_authenticated_providers(
                     "slug": grp_slug,
                     "name": grp_display or display_name,
                     "api_url": api_url,
+                    "api_mode": api_mode,
                     "models": [],
                     "ep_cfg": ep_cfg,  # used below for discover_models / api_key
                     "raw_names": [],
+                    "provider_keys": [],
                 }
             # Aggregate models across all members of the group (preserve order).
             for _m in entry_models:
                 if _m and _m not in ep_groups[group_key]["models"]:
                     ep_groups[group_key]["models"].append(_m)
             ep_groups[group_key]["raw_names"].append(display_name)
+            ep_groups[group_key]["provider_keys"].append(str(ep_name))
 
         for grp in ep_groups.values():
             ep_cfg = grp["ep_cfg"]
@@ -2684,13 +2811,24 @@ def list_authenticated_providers(
             if should_probe:
                 try:
                     from hermes_cli.models import fetch_api_models
+                    probe_kwargs = {
+                        "headers": _extra_headers_from_config(ep_cfg) or None,
+                    }
+                    if grp.get("api_mode"):
+                        probe_kwargs["api_mode"] = grp["api_mode"]
                     live_models = fetch_api_models(
                         api_key,
                         api_url,
-                        headers=_extra_headers_from_config(ep_cfg) or None,
+                        **probe_kwargs,
                     )
                     if live_models:
                         models_list = live_models
+                        _save_discovered_models_to_config(
+                            api_url,
+                            live_models,
+                            provider_names=grp.get("raw_names") or None,
+                            provider_keys=grp.get("provider_keys") or None,
+                        )
                 except Exception:
                     pass
 
@@ -2837,6 +2975,9 @@ def list_authenticated_providers(
             # with their own headers rather than collapsing into one row and
             # silently adopting whichever header set was seen first.
             entry_extra_headers = _extra_headers_from_config(entry)
+            entry_api_mode = str(
+                entry.get("api_mode") or entry.get("transport") or ""
+            ).strip().lower()
 
             # Display-name prefix (text before " — " / " - "), used both
             # as a grouping dimension and to derive the row's display name.
@@ -2850,7 +2991,12 @@ def list_authenticated_providers(
             )
 
             group_key = _custom_provider_picker_group_key(entry, _display_prefix)
-            if custom_provider_slug(raw_name).lower() == _current_provider_norm:
+            entry_identity_slugs = {
+                custom_provider_slug(str(entry.get(key) or "")).lower()
+                for key in ("name", "provider_key")
+                if str(entry.get(key) or "").strip()
+            }
+            if _current_provider_norm in entry_identity_slugs:
                 current_custom_group_key = group_key
             if group_key not in groups:
                 # Reuse the prefix computed above as the row display name;
@@ -2862,6 +3008,9 @@ def list_authenticated_providers(
                     "name": display_name,
                     "api_url": api_url,
                     "api_key": api_key,
+                    "api_mode": entry_api_mode,
+                    "provider_names": [],
+                    "provider_keys": [],
                     "models": [],
                     "has_explicit_models": False,
                     "discover_models": discover,
@@ -2876,6 +3025,15 @@ def list_authenticated_providers(
                 # honour that for the whole grouped row.
                 if not discover:
                     groups[group_key]["discover_models"] = False
+
+            if raw_name not in groups[group_key]["provider_names"]:
+                groups[group_key]["provider_names"].append(raw_name)
+            provider_key = str(entry.get("provider_key") or "").strip()
+            if (
+                provider_key
+                and provider_key not in groups[group_key]["provider_keys"]
+            ):
+                groups[group_key]["provider_keys"].append(provider_key)
 
             # The singular ``model:`` field only holds the currently
             # active model. Hermes's own writer (main.py::_save_custom_provider)
@@ -2986,11 +3144,16 @@ def list_authenticated_providers(
             if should_probe:
                 try:
                     from hermes_cli.models import fetch_api_models
+                    probe_kwargs = {
+                        "headers": grp.get("extra_headers") or None,
+                    }
+                    if grp.get("api_mode"):
+                        probe_kwargs["api_mode"] = grp["api_mode"]
 
                     live_models = fetch_api_models(
                         api_key,
                         api_url,
-                        headers=grp.get("extra_headers") or None,
+                        **probe_kwargs,
                     )
                     if live_models:
                         grp["models"] = live_models
@@ -2999,7 +3162,10 @@ def list_authenticated_providers(
                         # ``discover_models: false`` has a populated cache
                         # on the next read.  A failed save is non-fatal.
                         _save_discovered_models_to_config(
-                            api_url, live_models
+                            api_url,
+                            live_models,
+                            provider_names=grp.get("provider_names") or None,
+                            provider_keys=grp.get("provider_keys") or None,
                         )
                 except Exception:
                     pass

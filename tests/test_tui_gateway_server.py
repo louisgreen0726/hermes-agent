@@ -2668,6 +2668,33 @@ def test_background_agent_kwargs_preserves_empty_fallback_chain(monkeypatch):
     assert kwargs["fallback_model"] == []
 
 
+def test_background_agent_kwargs_preserves_named_custom_route_and_pool(monkeypatch):
+    pool = object()
+    agent = types.SimpleNamespace(
+        model="shared-model",
+        provider="custom",
+        requested_provider="custom:relay-b",
+        base_url="https://relay.example/v1",
+        api_key="relay-b-key",
+        api_mode="chat_completions",
+        _credential_pool=pool,
+        request_overrides={"extra_body": {"route": "relay-b"}},
+        _fallback_chain=[],
+    )
+    monkeypatch.setattr(server, "_load_cfg", lambda: {"max_turns": 25})
+    monkeypatch.setattr(server, "_load_enabled_toolsets", lambda: ["file"])
+    monkeypatch.setattr(server, "_get_db", lambda: None)
+
+    kwargs = server._background_agent_kwargs(agent, "task-id")
+
+    assert kwargs["provider"] == "custom"
+    assert kwargs["requested_provider"] == "custom:relay-b"
+    assert kwargs["credential_pool"] is pool
+    assert kwargs["request_overrides"] == {
+        "extra_body": {"route": "relay-b"}
+    }
+
+
 def test_startup_runtime_resolves_short_alias_without_network(monkeypatch):
     monkeypatch.setenv("HERMES_MODEL", "sonnet")
     monkeypatch.delenv("HERMES_TUI_PROVIDER", raising=False)

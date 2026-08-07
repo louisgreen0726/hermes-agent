@@ -355,6 +355,29 @@ def _slot_runtime(slot: dict[str, Any]) -> dict[str, Any]:
             out["api_key"] = rt["api_key"]
         if rt.get("api_mode"):
             out["api_mode"] = rt["api_mode"]
+        resolved_provider = str(rt.get("provider") or provider).strip()
+        requested_provider = str(
+            rt.get("requested_provider") or provider
+        ).strip()
+        if (
+            resolved_provider.casefold() == "custom"
+            and requested_provider.casefold() not in {"", "auto", "custom"}
+        ):
+            # ``call_llm`` canonicalizes a named custom slot with an explicit
+            # base_url to provider="custom".  Preserve the route identity in
+            # its runtime context so client caching plus TLS/header lookup
+            # cannot collapse same-endpoint siblings back together.
+            out["main_runtime"] = {
+                "provider": resolved_provider,
+                "requested_provider": requested_provider,
+                "model": str(rt.get("model") or model),
+                "base_url": str(rt.get("base_url") or ""),
+                "api_key": rt.get("api_key") or "",
+                "api_mode": str(rt.get("api_mode") or ""),
+            }
+        extra_headers = rt.get("extra_headers")
+        if isinstance(extra_headers, dict) and extra_headers:
+            out["extra_headers"] = dict(extra_headers)
         request_overrides = rt.get("request_overrides")
         if isinstance(request_overrides, dict):
             extra_body = request_overrides.get("extra_body")
@@ -498,7 +521,12 @@ def _run_reference(
         # reference model have its own output cap independently.
         _slot_max_tokens: int | None = slot.get("max_tokens")
         _effective_max_tokens = _slot_max_tokens if _slot_max_tokens is not None else max_tokens
-        extra_headers = None
+        slot_extra_headers = runtime.pop("extra_headers", None)
+        extra_headers = (
+            dict(slot_extra_headers)
+            if isinstance(slot_extra_headers, dict) and slot_extra_headers
+            else None
+        )
         # Normalize provider aliases (github, github-copilot, github-models,
         # ...) through the auxiliary client's canonical alias table so slot
         # configs that spell Copilot differently still get the header.
@@ -516,7 +544,10 @@ def _run_reference(
             # Copilot advisors can be rejected as unavailable to the
             # ``copilot-language-server`` integrator even though standalone
             # Copilot calls work.
-            extra_headers = {"x-initiator": "user"}
+            extra_headers = {
+                **(extra_headers or {}),
+                "x-initiator": "user",
+            }
         response = call_llm(
             task="moa_reference",
             messages=messages,
@@ -630,26 +661,61 @@ def _trim_messages_for_reference(
         least one preceding turn are always kept, even if still over budget —
         a too-long-but-recent view beats an empty request.
 
-    ``context_length_cache`` is an optional per-turn dict keyed by
-    ``(provider, model)`` so one fan-out (and every iteration reusing the
-    cache) resolves each model's window at most once instead of re-probing
-    metadata sources per-reference-per-iteration. When the window cannot be
-    resolved, messages are returned unchanged.
+    ``context_length_cache`` is an optional per-turn dict keyed by runtime
+    identity (provider, requested provider, model, endpoint, and scoped key)
+    so one fan-out (and every iteration reusing the cache) resolves each
+    model's window at most once without conflating same-endpoint custom keys.
+    When the window cannot be resolved, messages are returned unchanged.
     """
     if not messages:
         return messages
 
     from agent.model_metadata import (
         estimate_messages_tokens_rough,
+        get_context_cache_scope,
         get_model_context_length,
     )
 
     model = str(slot.get("model") or "")
     provider = str(runtime.get("provider") or slot.get("provider") or "")
+    requested_provider = str(runtime.get("requested_provider") or "").strip() or None
+    slot_provider = str(slot.get("provider") or "").strip()
+    provider_norm = provider.casefold()
+    if provider_norm.startswith("custom:"):
+        requested_provider = requested_provider or provider
+        provider = "custom"
+    elif requested_provider and requested_provider.casefold().startswith("custom:"):
+        provider = "custom"
+    elif provider_norm == "custom":
+        slot_identity = slot_provider.casefold()
+        if slot_identity not in {"", "auto", "custom"}:
+            requested_provider = requested_provider or slot_provider
+    elif provider_norm not in {"", "auto"}:
+        try:
+            from hermes_cli.runtime_provider import has_named_custom_provider
+
+            if has_named_custom_provider(provider):
+                requested_provider = requested_provider or provider
+                provider = "custom"
+        except Exception:
+            pass
     if not model:
         return messages
 
-    cache_key = (provider, model)
+    raw_key = runtime.get("api_key")
+    context_api_key = raw_key if isinstance(raw_key, str) else ""
+    cache_scope = get_context_cache_scope(
+        provider=provider,
+        requested_provider=requested_provider,
+        api_key=context_api_key,
+    )
+    cache_key = (
+        provider,
+        requested_provider or "",
+        model,
+        str(runtime.get("base_url") or "").rstrip("/"),
+        cache_scope,
+    )
     context_length: int | None = None
     if isinstance(context_length_cache, dict) and cache_key in context_length_cache:
         context_length = context_length_cache[cache_key]
@@ -658,8 +724,9 @@ def _trim_messages_for_reference(
             context_length = get_model_context_length(
                 model=model,
                 base_url=str(runtime.get("base_url") or ""),
-                api_key=str(runtime.get("api_key") or ""),
+                api_key=context_api_key,
                 provider=provider,
+                requested_provider=requested_provider,
             )
         except Exception:
             logger.debug(
@@ -795,7 +862,7 @@ def _run_references_parallel(
     # duplicate (provider, model) slots resolve their window once per turn
     # instead of re-probing metadata sources per reference (dict get/set is
     # GIL-atomic; a rare duplicate probe on a first-use race is harmless).
-    _ctx_len_cache: dict[tuple[str, str], int | None] = {}
+    _ctx_len_cache: dict[tuple[Any, ...], int | None] = {}
     try:
         for idx, slot in enumerate(reference_models):
             if slot.get("provider") == "moa":

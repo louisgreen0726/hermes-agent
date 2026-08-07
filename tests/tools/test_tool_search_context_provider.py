@@ -30,10 +30,18 @@ class TestResolveActiveContextLengthProviderAware:
 
         captured = {}
 
-        def fake_get_ctx(model_id, base_url="", api_key="", config_context_length=None, provider=""):
+        def fake_get_ctx(
+            model_id,
+            base_url="",
+            api_key="",
+            config_context_length=None,
+            provider="",
+            requested_provider=None,
+        ):
             captured.update(
                 model=model_id, base_url=base_url, api_key=api_key,
                 config_ctx=config_context_length, provider=provider,
+                requested_provider=requested_provider,
             )
             return 272_000
 
@@ -46,6 +54,7 @@ class TestResolveActiveContextLengthProviderAware:
 
         assert ctx == 272_000
         assert captured["provider"] == "openai-codex"
+        assert captured["requested_provider"] == "openai-codex"
         assert captured["base_url"] == "https://chatgpt.com/backend-api/codex"
         assert captured["api_key"] == "tok-live"
         mock_rt.assert_called_once_with(
@@ -60,8 +69,20 @@ class TestResolveActiveContextLengthProviderAware:
 
         captured = {}
 
-        def fake_get_ctx(model_id, base_url="", api_key="", config_context_length=None, provider=""):
-            captured.update(base_url=base_url, api_key=api_key, provider=provider)
+        def fake_get_ctx(
+            model_id,
+            base_url="",
+            api_key="",
+            config_context_length=None,
+            provider="",
+            requested_provider=None,
+        ):
+            captured.update(
+                base_url=base_url,
+                api_key=api_key,
+                provider=provider,
+                requested_provider=requested_provider,
+            )
             return 272_000
 
         with patch("hermes_cli.config.load_config",
@@ -83,8 +104,19 @@ class TestResolveActiveContextLengthProviderAware:
 
         captured = {}
 
-        def fake_get_ctx(model_id, base_url="", api_key="", config_context_length=None, provider=""):
-            captured.update(base_url=base_url, provider=provider)
+        def fake_get_ctx(
+            model_id,
+            base_url="",
+            api_key="",
+            config_context_length=None,
+            provider="",
+            requested_provider=None,
+        ):
+            captured.update(
+                base_url=base_url,
+                provider=provider,
+                requested_provider=requested_provider,
+            )
             return 200_000
 
         with patch("hermes_cli.config.load_config",
@@ -103,7 +135,14 @@ class TestResolveActiveContextLengthProviderAware:
 
         captured = {}
 
-        def fake_get_ctx(model_id, base_url="", api_key="", config_context_length=None, provider=""):
+        def fake_get_ctx(
+            model_id,
+            base_url="",
+            api_key="",
+            config_context_length=None,
+            provider="",
+            requested_provider=None,
+        ):
             captured["config_ctx"] = config_context_length
             return config_context_length or 0
 
@@ -117,3 +156,37 @@ class TestResolveActiveContextLengthProviderAware:
 
         assert ctx == 150_000
         assert captured["config_ctx"] == 150_000
+
+    def test_named_custom_runtime_identity_reaches_context_cache(self):
+        import model_tools
+
+        captured = {}
+
+        def fake_get_ctx(_model_id, **kwargs):
+            captured.update(kwargs)
+            return 96_000
+
+        config = _model_cfg(
+            model="shared-model",
+            provider="custom:relay-b",
+            base_url="https://relay.example.test/v1",
+        )
+        runtime = {
+            "provider": "custom",
+            "requested_provider": "custom:relay-b",
+            "base_url": "https://relay.example.test/v1",
+            "api_key": "key-b",
+        }
+        with patch("hermes_cli.config.load_config", return_value=config), patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            return_value=runtime,
+        ), patch(
+            "agent.model_metadata.get_model_context_length",
+            side_effect=fake_get_ctx,
+        ):
+            ctx = model_tools._resolve_active_context_length()
+
+        assert ctx == 96_000
+        assert captured["provider"] == "custom"
+        assert captured["requested_provider"] == "custom:relay-b"
+        assert captured["api_key"] == "key-b"

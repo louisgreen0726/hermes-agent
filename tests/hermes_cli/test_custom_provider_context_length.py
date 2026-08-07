@@ -27,6 +27,31 @@ class TestGetCustomProviderContextLength:
             == 1_050_000
         )
 
+    def test_same_url_override_is_scoped_by_provider_identity(self):
+        custom = [
+            {
+                "name": "Relay A",
+                "base_url": "https://example.invalid/v1",
+                "models": {"shared-model": {"context_length": 128_000}},
+            },
+            {
+                "name": "Relay B",
+                "base_url": "https://example.invalid/v1",
+                "models": {"shared-model": {"context_length": 512_000}},
+            },
+        ]
+
+        assert get_custom_provider_context_length(
+            "shared-model",
+            "https://example.invalid/v1",
+            custom,
+            provider_identity="custom:relay-b",
+        ) == 512_000
+        # Legacy URL-only callers retain first-entry behavior for compatibility.
+        assert get_custom_provider_context_length(
+            "shared-model", "https://example.invalid/v1", custom
+        ) == 128_000
+
     def test_trailing_slash_insensitive(self):
         custom = [
             {

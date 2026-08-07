@@ -106,6 +106,54 @@ class TestOllamaApiShowCaching:
         assert result == 131072  # probed for real, not the sibling's 999
         assert client.post.call_count == 1
 
+    def test_same_url_different_api_keys_do_not_share_result(self):
+        """One relay can expose different model limits to each credential."""
+        from agent import model_metadata
+
+        with patch.object(
+            model_metadata,
+            "_query_ollama_api_show_uncached",
+            side_effect=[131_072, 262_144],
+        ) as probe:
+            first = model_metadata._query_ollama_api_show(
+                "shared-model", "https://relay.example/v1", api_key="secret-a"
+            )
+            cached = model_metadata._query_ollama_api_show(
+                "shared-model", "https://relay.example/v1", api_key="secret-a"
+            )
+            second = model_metadata._query_ollama_api_show(
+                "shared-model", "https://relay.example/v1", api_key="secret-b"
+            )
+
+        assert (first, cached, second) == (131_072, 131_072, 262_144)
+        assert probe.call_count == 2
+        rendered_keys = repr(tuple(model_metadata._LOCAL_CTX_PROBE_CACHE))
+        assert "secret-a" not in rendered_keys
+        assert "secret-b" not in rendered_keys
+
+
+class TestLocalContextProbeCaching:
+    def test_same_url_different_api_keys_do_not_share_result(self):
+        from agent import model_metadata
+
+        with patch.object(
+            model_metadata,
+            "_query_local_context_length_uncached",
+            side_effect=[96_000, 192_000],
+        ) as probe:
+            first = model_metadata._query_local_context_length(
+                "shared-model", "https://relay.example/v1", api_key="secret-a"
+            )
+            cached = model_metadata._query_local_context_length(
+                "shared-model", "https://relay.example/v1", api_key="secret-a"
+            )
+            second = model_metadata._query_local_context_length(
+                "shared-model", "https://relay.example/v1", api_key="secret-b"
+            )
+
+        assert (first, cached, second) == (96_000, 96_000, 192_000)
+        assert probe.call_count == 2
+
 
 class TestDetectLocalServerTypeCache:
     """#29988: detect_local_server_type memoized with a bounded TTL."""
@@ -311,3 +359,33 @@ class TestContextCacheKeyNormalization:
 
         assert ("m1", "http://host/v1") not in model_metadata._LOCAL_CTX_PROBE_CACHE
         assert ("ollama_show", "m1", "http://host/v1") not in model_metadata._LOCAL_CTX_PROBE_CACHE
+
+    def test_invalidate_drops_only_matching_credential_scope(
+        self, tmp_path, monkeypatch
+    ):
+        import time as _time
+        from agent import model_metadata
+
+        monkeypatch.setattr(
+            model_metadata,
+            "_get_context_cache_path",
+            lambda: tmp_path / "context_lengths.yaml",
+        )
+        now = _time.monotonic()
+        scope_a = model_metadata._credential_fingerprint("secret-a")
+        scope_b = model_metadata._credential_fingerprint("secret-b")
+        key_a = ("m1", "http://host/v1", scope_a)
+        key_b = ("m1", "http://host/v1", scope_b)
+        show_a = ("ollama_show", "m1", "http://host/v1", scope_a)
+        show_b = ("ollama_show", "m1", "http://host/v1", scope_b)
+        for key in (key_a, key_b, show_a, show_b):
+            model_metadata._LOCAL_CTX_PROBE_CACHE[key] = (999, now)
+
+        model_metadata._invalidate_cached_context_length(
+            "m1", "http://host/v1", api_key="secret-a"
+        )
+
+        assert key_a not in model_metadata._LOCAL_CTX_PROBE_CACHE
+        assert show_a not in model_metadata._LOCAL_CTX_PROBE_CACHE
+        assert key_b in model_metadata._LOCAL_CTX_PROBE_CACHE
+        assert show_b in model_metadata._LOCAL_CTX_PROBE_CACHE

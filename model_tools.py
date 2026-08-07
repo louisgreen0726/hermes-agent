@@ -616,6 +616,9 @@ def _resolve_active_context_length() -> int:
         # (offline, no keys) degrades to a provider+base_url-only lookup so
         # the static provider-aware fallbacks still apply.
         provider = str(model_cfg.get("provider") or "").strip()
+        requested_provider = str(
+            model_cfg.get("requested_provider") or provider
+        ).strip()
         base_url = str(model_cfg.get("base_url") or "").strip()
         api_key = ""
         if provider:
@@ -626,6 +629,10 @@ def _resolve_active_context_length() -> int:
                 ) or {}
                 base_url = str(rt.get("base_url") or base_url or "").strip()
                 api_key = str(rt.get("api_key") or "").strip()
+                provider = str(rt.get("provider") or provider).strip()
+                requested_provider = str(
+                    rt.get("requested_provider") or requested_provider or provider
+                ).strip()
             except Exception as rt_exc:
                 logger.debug(
                     "Runtime credential resolution failed for tool-search "
@@ -638,6 +645,7 @@ def _resolve_active_context_length() -> int:
             api_key=api_key,
             config_context_length=config_ctx,
             provider=provider,
+            requested_provider=requested_provider or None,
         ) or 0)
     except Exception as e:
         logger.debug("Could not resolve active context length: %s", e)

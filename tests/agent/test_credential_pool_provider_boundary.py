@@ -64,7 +64,7 @@ def test_named_custom_pool_match_is_scoped_by_name_and_url(tmp_path, monkeypatch
     )
 
 
-def test_named_custom_pool_maps_provider_key_to_display_name_pool(
+def test_named_custom_pool_uses_provider_key_as_canonical_pool(
     tmp_path, monkeypatch
 ):
     import yaml
@@ -95,19 +95,47 @@ def test_named_custom_pool_maps_provider_key_to_display_name_pool(
     assert get_custom_provider_pool_key(
         relay_url,
         provider_name="relay-b-id",
-    ) == "custom:relay-b"
+    ) == "custom:relay-b-id"
     assert credential_pool_matches_provider(
-        "custom:relay-b",
+        "custom:relay-b-id",
         "custom",
         base_url=relay_url,
         requested_provider="custom:relay-b-id",
     )
     assert not credential_pool_matches_provider(
-        "custom:relay-a",
+        "custom:relay-a-id",
         "custom",
         base_url=relay_url,
         requested_provider="custom:relay-b-id",
     )
+
+
+def test_custom_provider_iteration_merges_legacy_and_keyed_schemas():
+    """A retained legacy row must not hide providers from the keyed schema."""
+    from agent.credential_pool import _iter_custom_providers
+
+    entries = list(
+        _iter_custom_providers(
+            {
+                "custom_providers": [
+                    {
+                        "name": "Legacy Relay",
+                        "base_url": "https://legacy.example/v1",
+                    }
+                ],
+                "providers": {
+                    "relay-b-id": {
+                        "name": "Relay B",
+                        "base_url": "https://relay.example/v1",
+                    }
+                },
+            }
+        )
+    )
+
+    assert [name for name, _entry in entries] == ["relay-b-id", "legacy-relay"]
+    relay_b = entries[0][1]
+    assert relay_b["provider_key"] == "relay-b-id"
 
 
 def test_runtime_ignores_pool_loaded_for_different_provider(monkeypatch):

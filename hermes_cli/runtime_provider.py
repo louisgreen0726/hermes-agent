@@ -675,73 +675,73 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
     providers = config.get("providers")
     if isinstance(providers, dict):
         from hermes_cli.config import is_provider_enabled
-        for ep_name, entry in providers.items():
-            if not isinstance(entry, dict):
-                continue
-            # Skip providers the user explicitly disabled via
-            # ``providers.<name>.enabled: false``. They remain in config
-            # so re-enabling is a one-line edit, but the resolver pretends
-            # they're not configured.
-            if not is_provider_enabled(entry):
-                continue
-            # Match exact name or normalized name
-            name_norm = _normalize_custom_provider_name(ep_name)
-            # Resolve the API key from the env var name stored in key_env
+
+        enabled_rows = [
+            (str(ep_name), entry)
+            for ep_name, entry in providers.items()
+            if isinstance(entry, dict) and is_provider_enabled(entry)
+        ]
+
+        def _provider_row_result(
+            ep_name: str,
+            entry: Dict[str, Any],
+        ) -> Optional[Dict[str, Any]]:
+            base_url = (
+                entry.get("api")
+                or entry.get("url")
+                or entry.get("base_url")
+                or ""
+            )
+            if not isinstance(base_url, str) or not base_url.strip():
+                return None
             key_env = str(entry.get("key_env", "") or "").strip()
             resolved_api_key = _getenv(key_env, "").strip() if key_env else ""
-            # Fall back to inline api_key when key_env is absent or unresolvable
             if not resolved_api_key:
                 resolved_api_key = str(entry.get("api_key", "") or "").strip()
+            result: Dict[str, Any] = {
+                "name": entry.get("name", ep_name),
+                "provider_key": ep_name,
+                "base_url": base_url.strip(),
+                "api_key": resolved_api_key,
+                "model": entry.get("default_model", ""),
+            }
+            extra_body = entry.get("extra_body")
+            if isinstance(extra_body, dict):
+                result["extra_body"] = dict(extra_body)
+            _lift_extra_headers(entry, result)
+            # The v11→v12 migration writes the API mode under ``transport``;
+            # hand-edited configs may retain the legacy ``api_mode`` spelling.
+            api_mode = _parse_api_mode(
+                entry.get("api_mode") or entry.get("transport")
+            )
+            if api_mode:
+                result["api_mode"] = api_mode
+            _lift_max_output_tokens(entry, result)
+            return result
 
-            if requested_norm in {ep_name, name_norm, f"custom:{name_norm}"}:
-                # Found match by provider key
-                base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
-                if base_url:
-                    result = {
-                        "name": entry.get("name", ep_name),
-                        "base_url": base_url.strip(),
-                        "api_key": resolved_api_key,
-                        "model": entry.get("default_model", ""),
-                    }
-                    extra_body = entry.get("extra_body")
-                    if isinstance(extra_body, dict):
-                        result["extra_body"] = dict(extra_body)
-                    _lift_extra_headers(entry, result)
-                    # The v11→v12 migration writes the API mode under the new
-                    # ``transport`` field, but hand-edited configs may still
-                    # use the legacy ``api_mode`` spelling.  Accept both —
-                    # the runtime normaliser ``_normalize_custom_provider_entry``
-                    # already does, so without this lift every migrated config
-                    # silently downgrades codex_responses / anthropic_messages
-                    # providers to chat_completions in the resolved runtime.
-                    api_mode = _parse_api_mode(entry.get("api_mode") or entry.get("transport"))
-                    if api_mode:
-                        result["api_mode"] = api_mode
-                    _lift_max_output_tokens(entry, result)
-                    return result
-            # Also check the 'name' field if present
-            display_name = entry.get("name", "")
-            if display_name:
-                display_norm = _normalize_custom_provider_name(display_name)
-                if requested_norm in {display_name, display_norm, f"custom:{display_norm}"}:
-                    # Found match by display name
-                    base_url = entry.get("api") or entry.get("url") or entry.get("base_url") or ""
-                    if base_url:
-                        result = {
-                            "name": display_name,
-                            "base_url": base_url.strip(),
-                            "api_key": resolved_api_key,
-                            "model": entry.get("default_model", ""),
-                        }
-                        extra_body = entry.get("extra_body")
-                        if isinstance(extra_body, dict):
-                            result["extra_body"] = dict(extra_body)
-                        _lift_extra_headers(entry, result)
-                        api_mode = _parse_api_mode(entry.get("api_mode") or entry.get("transport"))
-                        if api_mode:
-                            result["api_mode"] = api_mode
-                        _lift_max_output_tokens(entry, result)
-                        return result
+        # Mapping keys are the durable identity. Scan all of them before
+        # considering display-name aliases so an earlier row's display name
+        # cannot shadow a later row's real key.
+        for ep_name, entry in enabled_rows:
+            key_norm = _normalize_custom_provider_name(ep_name)
+            if requested_norm in {key_norm, f"custom:{key_norm}"}:
+                return _provider_row_result(ep_name, entry)
+
+        # Display names are a legacy convenience, not a stable identity. Keep
+        # the alias only when it maps to exactly one enabled provider; duplicate
+        # labels must fail closed instead of selecting the first YAML row.
+        display_matches = []
+        for ep_name, entry in enabled_rows:
+            display_name = str(entry.get("name", "") or "").strip()
+            if not display_name:
+                continue
+            display_norm = _normalize_custom_provider_name(display_name)
+            if requested_norm in {display_norm, f"custom:{display_norm}"}:
+                display_matches.append((ep_name, entry))
+        if len(display_matches) == 1:
+            return _provider_row_result(*display_matches[0])
+        if len(display_matches) > 1:
+            return None
 
     # Fall back to custom_providers: list (legacy format)
     custom_providers = config.get("custom_providers")
@@ -753,24 +753,32 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
         )
         return None
 
-    custom_providers = get_compatible_custom_providers(config)
-    if not custom_providers:
+    raw_custom_providers = config.get("custom_providers")
+    if not isinstance(raw_custom_providers, list) or not raw_custom_providers:
         return None
 
-    for entry in custom_providers:
-        if not isinstance(entry, dict):
-            continue
+    # Normalize legacy rows individually instead of using the deduplicated
+    # compatibility view. Two same-name rows are not one routable identity,
+    # even when every non-secret field happens to match.
+    from hermes_cli.config import _normalize_custom_provider_entry
+
+    custom_providers = []
+    for raw_entry in raw_custom_providers:
+        normalized = _normalize_custom_provider_entry(
+            dict(raw_entry) if isinstance(raw_entry, dict) else raw_entry
+        )
+        if normalized is not None:
+            custom_providers.append(normalized)
+
+    legacy_rows = [
+        entry for entry in custom_providers if isinstance(entry, dict)
+    ]
+
+    def _legacy_row_result(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         name = entry.get("name")
         base_url = entry.get("base_url")
         if not isinstance(name, str) or not isinstance(base_url, str):
-            continue
-        name_norm = _normalize_custom_provider_name(name)
-        menu_key = f"custom:{name_norm}"
-        provider_key = str(entry.get("provider_key", "") or "").strip()
-        provider_key_norm = _normalize_custom_provider_name(provider_key) if provider_key else ""
-        provider_menu_key = f"custom:{provider_key_norm}" if provider_key_norm else ""
-        if requested_norm not in {name_norm, menu_key, provider_key_norm, provider_menu_key}:
-            continue
+            return None
         result = {
             "name": name.strip(),
             "base_url": base_url.strip(),
@@ -779,8 +787,6 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
         key_env = str(entry.get("key_env", "") or "").strip()
         if key_env:
             result["key_env"] = key_env
-        if provider_key:
-            result["provider_key"] = provider_key
         extra_body = entry.get("extra_body")
         if isinstance(extra_body, dict):
             result["extra_body"] = dict(extra_body)
@@ -793,6 +799,20 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
             result["model"] = model_name
         _lift_max_output_tokens(entry, result)
         return result
+
+    # Legacy list rows have only a display name. Accept that alias only when
+    # it identifies exactly one legacy row; duplicate names are not a
+    # stable route identity and must never select whichever YAML row came first.
+    display_matches = []
+    for entry in legacy_rows:
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        name_norm = _normalize_custom_provider_name(name)
+        if requested_norm in {name_norm, f"custom:{name_norm}"}:
+            display_matches.append(entry)
+    if len(display_matches) == 1:
+        return _legacy_row_result(display_matches[0])
 
     return None
 
@@ -811,12 +831,38 @@ def has_named_custom_provider(requested_provider: str) -> bool:
         return False
 
 
+def canonical_named_custom_provider_identity(
+    requested_provider: str,
+) -> Optional[str]:
+    """Return the stable ``custom:<key>`` identity for a configured route.
+
+    Modern ``providers:`` mapping keys are authoritative even when callers use
+    a display-name alias. Legacy ``custom_providers:`` rows have no mapping key,
+    so their unique name remains the identity. Ambiguous and unknown aliases
+    fail closed via :func:`_get_named_custom_provider`.
+    """
+    try:
+        entry = _get_named_custom_provider(requested_provider)
+    except Exception:
+        return None
+    if not isinstance(entry, dict):
+        return None
+    raw_identity = entry.get("provider_key") or entry.get("name")
+    if not isinstance(raw_identity, str):
+        return None
+    normalized = _normalize_custom_provider_name(raw_identity)
+    if not normalized:
+        return None
+    return normalized if normalized.startswith("custom:") else f"custom:{normalized}"
+
+
 def find_custom_provider_identity(base_url: str) -> Optional[str]:
     """Map an endpoint URL back to its canonical ``custom:<name>`` menu key.
 
-    Returns the ``custom:<normalized-name>`` slug of the first ``providers:``
-    / ``custom_providers:`` entry whose base_url matches, or ``None`` when no
-    entry owns the URL.
+    Returns an identity only when exactly one configured route owns the URL.
+    Shared relay URLs are intentionally ambiguous and return ``None`` so legacy
+    session recovery can continue to stronger evidence (such as a unique model)
+    instead of silently choosing the first YAML row.
 
     Session persistence stores the agent's *resolved* provider, and for every
     named custom endpoint that is the literal string ``"custom"`` — the entry
@@ -835,40 +881,37 @@ def find_custom_provider_identity(base_url: str) -> Optional[str]:
     except Exception:
         return None
 
-    providers = config.get("providers")
-    if isinstance(providers, dict):
-        for ep_name, entry in providers.items():
-            if not isinstance(entry, dict):
-                continue
-            entry_url = (
-                entry.get("api") or entry.get("url") or entry.get("base_url") or ""
-            )
-            if _normalize_base_url_for_match(entry_url) == target:
-                return f"custom:{_normalize_custom_provider_name(str(ep_name))}"
-
     try:
         custom_providers = get_compatible_custom_providers(config)
     except Exception:
         custom_providers = None
+    matches = set()
     for entry in custom_providers or []:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name")
-        if not isinstance(name, str) or not name.strip():
+        identity = entry.get("provider_key") or entry.get("name")
+        if not isinstance(identity, str) or not identity.strip():
             continue
         if _normalize_base_url_for_match(entry.get("base_url")) == target:
-            return f"custom:{_normalize_custom_provider_name(name)}"
+            matches.add(
+                f"custom:{_normalize_custom_provider_name(identity)}"
+            )
 
-    return None
+    if len(matches) != 1:
+        return None
+    identity = next(iter(matches))
+    # The compatibility projection deduplicates stale rows for picker display.
+    # Route recovery needs a stronger guarantee: the identity itself must still
+    # resolve uniquely against the raw config.
+    return identity if _get_named_custom_provider(identity) is not None else None
 
 
 def find_custom_provider_identity_by_model(model: str) -> Optional[str]:
     """Map a model id back to the ``custom:<name>`` entry that serves it.
 
-    Returns the ``custom:<normalized-name>`` slug of the first ``providers:``
-    / ``custom_providers:`` entry whose ``model`` / ``default_model`` matches,
-    or whose ``models`` catalog (dict or list shape) contains the id.
-    ``None`` when no entry serves the model.
+    Returns an identity only when exactly one configured route serves the model
+    through ``model`` / ``default_model`` or its ``models`` catalog. Ambiguous
+    model ids return ``None`` rather than selecting the first config row.
 
     Companion to :func:`find_custom_provider_identity` (URL reverse-lookup)
     for the persistence paths where no base_url survived the round-trip: the
@@ -905,28 +948,26 @@ def find_custom_provider_identity_by_model(model: str) -> Optional[str]:
                         return True
         return False
 
-    providers = config.get("providers")
-    if isinstance(providers, dict):
-        for ep_name, entry in providers.items():
-            if not isinstance(entry, dict):
-                continue
-            if _entry_serves_model(entry):
-                return f"custom:{_normalize_custom_provider_name(str(ep_name))}"
-
     try:
         custom_providers = get_compatible_custom_providers(config)
     except Exception:
         custom_providers = None
+    matches = set()
     for entry in custom_providers or []:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("name")
-        if not isinstance(name, str) or not name.strip():
+        identity = entry.get("provider_key") or entry.get("name")
+        if not isinstance(identity, str) or not identity.strip():
             continue
         if _entry_serves_model(entry):
-            return f"custom:{_normalize_custom_provider_name(name)}"
+            matches.add(
+                f"custom:{_normalize_custom_provider_name(identity)}"
+            )
 
-    return None
+    if len(matches) != 1:
+        return None
+    identity = next(iter(matches))
+    return identity if _get_named_custom_provider(identity) is not None else None
 
 
 def canonical_custom_identity(
@@ -1086,7 +1127,16 @@ def _resolve_named_custom_runtime(
         return None
 
     # Check if a credential pool exists for this custom endpoint
-    pool_result = _try_resolve_from_custom_pool(base_url, "custom", custom_provider.get("api_mode"), provider_name=custom_provider.get("name"))
+    pool_result = _try_resolve_from_custom_pool(
+        base_url,
+        "custom",
+        custom_provider.get("api_mode"),
+        provider_name=(
+            custom_provider.get("provider_key")
+            or requested_provider
+            or custom_provider.get("name")
+        ),
+    )
     if pool_result:
         # Propagate the model name even when using pooled credentials —
         # the pool doesn't know about the custom_providers model field.

@@ -1537,7 +1537,11 @@ class GatewaySlashCommandsMixin:
         )
         if override:
             current_model = override.get("model", current_model)
-            current_provider = override.get("provider", current_provider)
+            current_provider = (
+                override.get("requested_provider")
+                or override.get("provider")
+                or current_provider
+            )
             current_base_url = override.get("base_url", current_base_url)
             current_api_key = override.get("api_key", current_api_key)
 
@@ -1606,6 +1610,15 @@ class GatewaySlashCommandsMixin:
                         if not result.success:
                             return t("gateway.model.error_prefix", error=result.error_message)
 
+                        _runtime_provider = (
+                            getattr(result, "runtime_provider", "")
+                            or result.target_provider
+                        )
+                        _requested_provider = (
+                            getattr(result, "requested_provider", "")
+                            or result.target_provider
+                        )
+
                         try:
                             from hermes_cli.context_switch_guard import (
                                 enrich_model_switch_warnings_for_gateway,
@@ -1633,10 +1646,11 @@ class GatewaySlashCommandsMixin:
                             try:
                                 cached_entry[0].switch_model(
                                     new_model=result.new_model,
-                                    new_provider=result.target_provider,
+                                    new_provider=_runtime_provider,
                                     api_key=result.api_key,
                                     base_url=result.base_url,
                                     api_mode=result.api_mode,
+                                    requested_provider=_requested_provider,
                                 )
                             except Exception as exc:
                                 # The in-place swap rolled the agent back to the
@@ -1691,7 +1705,8 @@ class GatewaySlashCommandsMixin:
                         )
                         _self._session_model_overrides[_session_key] = {
                             "model": result.new_model,
-                            "provider": result.target_provider,
+                            "provider": _runtime_provider,
+                            "requested_provider": _requested_provider,
                             "api_key": result.api_key,
                             "base_url": result.base_url,
                             "api_mode": result.api_mode,
@@ -1799,9 +1814,12 @@ class GatewaySlashCommandsMixin:
                             _sw_model_cfg = {}
                         ctx = resolve_display_context_length(
                             result.new_model,
-                            result.target_provider,
+                            result.runtime_provider or result.target_provider,
                             base_url=result.base_url or current_base_url or "",
                             api_key=result.api_key or current_api_key or "",
+                            requested_provider=(
+                                result.requested_provider or result.target_provider
+                            ),
                             model_info=mi,
                             custom_providers=custom_provs,
                             config_context_length=_sw_config_ctx,
@@ -1912,6 +1930,13 @@ class GatewaySlashCommandsMixin:
         if not result.success:
             return t("gateway.model.error_prefix", error=result.error_message)
 
+        _runtime_provider = (
+            getattr(result, "runtime_provider", "") or result.target_provider
+        )
+        _requested_provider = (
+            getattr(result, "requested_provider", "") or result.target_provider
+        )
+
         try:
             from hermes_cli.context_switch_guard import (
                 enrich_model_switch_warnings_for_gateway,
@@ -1942,10 +1967,11 @@ class GatewaySlashCommandsMixin:
                 try:
                     cached_entry[0].switch_model(
                         new_model=result.new_model,
-                        new_provider=result.target_provider,
+                        new_provider=_runtime_provider,
                         api_key=result.api_key,
                         base_url=result.base_url,
                         api_mode=result.api_mode,
+                        requested_provider=_requested_provider,
                     )
                 except Exception as exc:
                     # In-place swap rolled the agent back to the OLD working
@@ -1999,7 +2025,8 @@ class GatewaySlashCommandsMixin:
             # Store session override so next agent creation uses the new model
             self._session_model_overrides[session_key] = {
                 "model": result.new_model,
-                "provider": result.target_provider,
+                "provider": _runtime_provider,
+                "requested_provider": _requested_provider,
                 "api_key": result.api_key,
                 "base_url": result.base_url,
                 "api_mode": result.api_mode,
@@ -2122,9 +2149,10 @@ class GatewaySlashCommandsMixin:
                 _sw2_model_cfg = {}
             ctx = resolve_display_context_length(
                 result.new_model,
-                result.target_provider,
+                result.runtime_provider or result.target_provider,
                 base_url=result.base_url or current_base_url or "",
                 api_key=result.api_key or current_api_key or "",
+                requested_provider=result.requested_provider or result.target_provider,
                 model_info=mi,
                 custom_providers=custom_provs,
                 config_context_length=_sw2_config_ctx,

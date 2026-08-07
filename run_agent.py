@@ -159,6 +159,7 @@ from agent.context_compressor import (  # noqa: F401
     COMPRESSED_SUMMARY_METADATA_KEY,
     ContextCompressor,
 )
+from agent.context_engine import update_context_engine_model
 from agent.retry_utils import jittered_backoff  # noqa: F401
 from agent.prompt_builder import (  # noqa: F401  # re-exported via _ra() / mock.patch("run_agent.<name>") / from run_agent import <name>
     DEFAULT_AGENT_IDENTITY,
@@ -806,21 +807,39 @@ class AIAgent:
                 # next render tick.
                 cc = getattr(self, "context_compressor", None)
                 if cc is not None:
-                    cc.update_model(
+                    update_context_engine_model(
+                        cc,
                         model=self.model,
                         context_length=loaded_ctx,
                         base_url=self.base_url,
                         api_key=getattr(self, "api_key", ""),
                         provider=self.provider,
                         api_mode=self.api_mode,
+                        requested_provider=getattr(self, "requested_provider", None),
                     )
         except Exception as err:
             logger.debug("LM Studio preload skipped: %s", err)
 
-    def switch_model(self, new_model, new_provider, api_key='', base_url='', api_mode=''):
+    def switch_model(
+        self,
+        new_model,
+        new_provider,
+        api_key='',
+        base_url='',
+        api_mode='',
+        requested_provider=None,
+    ):
         """Forwarder — see ``agent.agent_runtime_helpers.switch_model``."""
         from agent.agent_runtime_helpers import switch_model
-        return switch_model(self, new_model, new_provider, api_key, base_url, api_mode)
+        return switch_model(
+            self,
+            new_model,
+            new_provider,
+            api_key,
+            base_url,
+            api_mode,
+            requested_provider=requested_provider,
+        )
 
     def _safe_print(self, *args, **kwargs):
         """Print that silently handles broken pipes / closed stdout.
@@ -4930,6 +4949,7 @@ class AIAgent:
         base_url: str,
         *,
         apply_user_headers: bool = True,
+        provider_identity: Optional[str] = None,
     ) -> None:
         from agent.auxiliary_client import (
             build_nvidia_nim_headers,
@@ -4986,7 +5006,13 @@ class AIAgent:
                 )
 
                 apply_custom_provider_extra_headers_to_client_kwargs(
-                    self._client_kwargs, base_url,
+                    self._client_kwargs,
+                    base_url,
+                    provider_identity=(
+                        getattr(self, "requested_provider", None)
+                        if provider_identity is None
+                        else provider_identity
+                    ),
                 )
             except Exception:
                 logger.debug("custom-provider extra_headers skipped", exc_info=True)
@@ -5067,6 +5093,7 @@ class AIAgent:
                 self._client_kwargs,
                 str(self.base_url or ""),
                 get_compatible_custom_providers(load_config_readonly()),
+                provider_identity=getattr(self, "requested_provider", None),
             )
         except Exception:
             logger.debug(

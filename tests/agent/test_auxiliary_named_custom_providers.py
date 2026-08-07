@@ -561,3 +561,90 @@ class TestResolveProviderClientMainRuntimeCustom:
         assert model == "explicit-model"
         assert "explicit.example.com" in str(client.base_url)
         assert client.api_key == "sk-explicit"
+
+    def test_same_url_main_runtime_uses_requested_sibling_transport_settings(
+        self, tmp_path
+    ):
+        """Auxiliary clients must not take TLS/headers from the first URL match."""
+        _write_config(
+            tmp_path,
+            {
+                "custom_providers": [
+                    {
+                        "name": "Relay A",
+                        "base_url": "https://shared.example/v1",
+                        "api_key": "key-a",
+                        "ssl_verify": True,
+                        "extra_headers": {"X-Relay": "a"},
+                    },
+                    {
+                        "name": "Relay B",
+                        "base_url": "https://shared.example/v1",
+                        "api_key": "key-b",
+                        "ssl_verify": False,
+                        "extra_headers": {"X-Relay": "b"},
+                    },
+                ]
+            },
+        )
+        from agent.auxiliary_client import resolve_provider_client
+
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            client, _ = resolve_provider_client(
+                "custom",
+                model="shared-model",
+                main_runtime={
+                    "provider": "custom",
+                    "requested_provider": "custom:relay-b",
+                    "base_url": "https://shared.example/v1",
+                    "api_key": "key-b",
+                },
+            )
+
+        assert client is not None
+        kwargs = mock_openai.call_args.kwargs
+        assert kwargs["default_headers"]["X-Relay"] == "b"
+        http_client = kwargs["http_client"]
+        assert http_client._transport._pool._ssl_context.check_hostname is False
+        http_client.close()
+
+    def test_same_url_named_provider_async_conversion_keeps_identity_headers(
+        self, tmp_path
+    ):
+        _write_config(
+            tmp_path,
+            {
+                "custom_providers": [
+                    {
+                        "name": "Relay A",
+                        "base_url": "https://shared.example/v1",
+                        "api_key": "key-a",
+                        "extra_headers": {"X-Relay": "a"},
+                    },
+                    {
+                        "name": "Relay B",
+                        "base_url": "https://shared.example/v1",
+                        "api_key": "key-b",
+                        "extra_headers": {"X-Relay": "b"},
+                    },
+                ]
+            },
+        )
+        from agent.auxiliary_client import resolve_provider_client
+
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            with patch("openai.AsyncOpenAI") as mock_async:
+                mock_async.return_value = MagicMock()
+                client, _ = resolve_provider_client(
+                    "custom:relay-b",
+                    model="shared-model",
+                    async_mode=True,
+                )
+
+        assert client is not None
+        assert mock_async.call_args.kwargs["default_headers"]["X-Relay"] == "b"
+        http_client = mock_async.call_args.kwargs.get("http_client")
+        if http_client is not None and hasattr(http_client, "close"):
+            http_client.close()

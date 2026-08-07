@@ -1088,6 +1088,83 @@ def test_named_custom_provider_same_url_uses_matching_key_env_and_api_mode(monke
     assert resolved["model"] == "claude-opus-4-8"
 
 
+def test_named_custom_mapping_key_wins_over_earlier_display_alias(monkeypatch):
+    """A display alias cannot shadow a later provider's durable mapping key."""
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "first-route": {
+                    "name": "relay-b",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "wrong-key",
+                },
+                "relay-b": {
+                    "name": "Second Route",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "right-key",
+                },
+            }
+        },
+    )
+
+    resolved = rp._get_named_custom_provider("custom:relay-b")
+
+    assert resolved is not None
+    assert resolved["provider_key"] == "relay-b"
+    assert resolved["api_key"] == "right-key"
+
+
+def test_duplicate_named_custom_display_alias_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "relay-a": {
+                    "name": "Shared Relay",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "key-a",
+                },
+                "relay-b": {
+                    "name": "Shared Relay",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "key-b",
+                },
+            }
+        },
+    )
+
+    assert rp._get_named_custom_provider("custom:shared-relay") is None
+    assert rp._get_named_custom_provider("custom:relay-a")["api_key"] == "key-a"
+    assert rp._get_named_custom_provider("custom:relay-b")["api_key"] == "key-b"
+
+
+def test_duplicate_legacy_custom_display_alias_fails_closed(monkeypatch):
+    """Legacy list order must not decide which credential a shared name uses."""
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "custom_providers": [
+                {
+                    "name": "Shared Relay",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "key-a",
+                },
+                {
+                    "name": "Shared Relay",
+                    "base_url": "https://relay.example.test/v1",
+                    "api_key": "key-b",
+                },
+            ]
+        },
+    )
+
+    assert rp._get_named_custom_provider("custom:shared-relay") is None
+
+
 def test_named_custom_provider_falls_back_to_openai_api_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "env-openai-key")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

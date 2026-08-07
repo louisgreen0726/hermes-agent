@@ -2562,7 +2562,86 @@ def _merge_with_models_dev(provider: str, curated: list[str]) -> list[str]:
     return merged
 
 
-def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) -> list[str]:
+def _canonical_named_custom_catalog_identity(provider: Optional[str]) -> Optional[str]:
+    """Return the stable cache identity for a configured custom provider."""
+    requested = str(provider or "").strip()
+    if not requested:
+        return None
+    try:
+        from hermes_cli.runtime_provider import (
+            canonical_named_custom_provider_identity,
+        )
+
+        return canonical_named_custom_provider_identity(requested)
+    except Exception:
+        return None
+
+
+def _resolve_named_custom_catalog_runtime(
+    provider: Optional[str],
+    *,
+    canonical_identity: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Resolve one named custom provider for model-catalog discovery.
+
+    ``provider_model_ids`` historically reduced every custom provider to the
+    bare ``custom`` billing class and then read ``model.base_url``.  That loses
+    the route identity when two saved providers share an endpoint, so the
+    first/global key can populate the second provider's catalog cache.  Only
+    opt into runtime resolution when the requested value names a configured
+    custom provider; unknown and built-in providers keep their existing paths.
+    """
+    requested = str(provider or "").strip()
+    if not requested:
+        return None
+    try:
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        identity = canonical_identity or _canonical_named_custom_catalog_identity(
+            requested
+        )
+        if not identity:
+            return None
+        runtime = resolve_runtime_provider(requested=identity)
+    except Exception:
+        return None
+    return runtime if isinstance(runtime, dict) else None
+
+
+def _named_custom_runtime_model_ids(runtime: dict[str, Any]) -> list[str]:
+    """Fetch a named custom catalog from one already-resolved runtime."""
+    base_url = str(runtime.get("base_url") or "").strip()
+    raw_api_key = runtime.get("api_key")
+    api_key = raw_api_key if isinstance(raw_api_key, str) else ""
+    if api_key == "no-key-required":
+        api_key = ""
+    if base_url:
+        live = fetch_api_models(
+            api_key,
+            base_url,
+            api_mode=str(runtime.get("api_mode") or "").strip() or None,
+            headers=(
+                dict(runtime["extra_headers"])
+                if isinstance(runtime.get("extra_headers"), dict)
+                else None
+            ),
+        )
+        if live:
+            return live
+
+    # A failed /models probe should still leave a provider selectable when its
+    # config declares a default model. The picker may merge richer configured
+    # model lists on top of this result.
+    fallback_model = str(runtime.get("model") or "").strip()
+    return [fallback_model] if fallback_model else []
+
+
+def provider_model_ids(
+    provider: Optional[str],
+    *,
+    force_refresh: bool = False,
+    _catalog_runtime: Optional[dict[str, Any]] = None,
+) -> list[str]:
     """Return the best known model catalog for a provider.
 
     Tries live API endpoints for providers that support them (Codex, Nous),
@@ -2571,6 +2650,14 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
     models.dev entries are merged on top of curated so new models released
     on the platform appear in ``/model`` without a Hermes release.
     """
+    catalog_runtime = (
+        _catalog_runtime
+        if _catalog_runtime is not None
+        else _resolve_named_custom_catalog_runtime(provider)
+    )
+    if catalog_runtime is not None:
+        return _named_custom_runtime_model_ids(catalog_runtime)
+
     normalized = normalize_provider(provider)
     if normalized == "openrouter":
         return model_ids(force_refresh=force_refresh)
@@ -2838,7 +2925,11 @@ def _provider_models_cache_path() -> Path:
     return get_hermes_home() / "provider_models_cache.json"
 
 
-def _credential_fingerprint(provider: str) -> str:
+def _credential_fingerprint(
+    provider: str,
+    *,
+    catalog_runtime: Optional[dict[str, Any]] = None,
+) -> str:
     """Return a short hash representing the credentials that
     ``provider_model_ids(provider)`` would see right now.
 
@@ -2855,6 +2946,60 @@ def _credential_fingerprint(provider: str) -> str:
     import os as _os
 
     parts: list[str] = []
+
+    # A named custom runtime is resolved once by cached_provider_model_ids().
+    # Hash that exact snapshot so the cache lookup and the live request cannot
+    # observe different round-robin pool entries. Header values may be secrets;
+    # they only participate in this in-memory material and are never persisted.
+    if catalog_runtime is not None:
+        raw_api_key = catalog_runtime.get("api_key")
+        runtime_api_key = raw_api_key if isinstance(raw_api_key, str) else ""
+        raw_headers = catalog_runtime.get("extra_headers")
+        runtime_headers = (
+            {str(k): str(v) for k, v in raw_headers.items()}
+            if isinstance(raw_headers, dict)
+            else {}
+        )
+        runtime_identity = {
+            "requested_provider": str(
+                catalog_runtime.get("requested_provider") or provider or ""
+            ).strip().casefold(),
+            "provider": str(catalog_runtime.get("provider") or "").strip().casefold(),
+            "base_url": str(catalog_runtime.get("base_url") or "").strip().rstrip("/"),
+            "api_mode": str(catalog_runtime.get("api_mode") or "").strip().casefold(),
+            "api_key": runtime_api_key,
+            "extra_headers": runtime_headers,
+        }
+        parts.append(
+            "catalog_runtime="
+            + json.dumps(runtime_identity, sort_keys=True, separators=(",", ":"))
+        )
+        # The exact runtime snapshot is sufficient. Folding the shared
+        # auth.json mtime in below would invalidate Relay A merely because
+        # Relay B seeded or refreshed its own pool entry, recreating the
+        # cross-provider "refresh the model list again" symptom.
+        blob = "|".join(parts).encode("utf-8", errors="replace")
+        return hashlib.blake2b(blob, digest_size=8).hexdigest()
+    elif normalize_provider(provider) == "custom":
+        # Preserve the legacy bare-custom path. Its endpoint/key live in the
+        # model config rather than PROVIDER_REGISTRY, so env/file mtimes alone
+        # cannot invalidate the catalog when that route changes.
+        model_cfg = _get_model_config_dict()
+        bare_custom_identity = {
+            "requested_provider": str(provider or "").strip().casefold(),
+            "base_url": str(model_cfg.get("base_url") or "").strip().rstrip("/"),
+            "api_mode": str(model_cfg.get("api_mode") or "").strip().casefold(),
+            "api_key": str(model_cfg.get("api_key") or ""),
+            "extra_headers": (
+                model_cfg.get("extra_headers")
+                if isinstance(model_cfg.get("extra_headers"), dict)
+                else {}
+            ),
+        }
+        parts.append(
+            "bare_custom="
+            + json.dumps(bare_custom_identity, sort_keys=True, separators=(",", ":"))
+        )
 
     # Env vars from PROVIDER_REGISTRY for this slug
     try:
@@ -2944,13 +3089,25 @@ def cached_provider_model_ids(
     Hits the cache when fresh; otherwise calls the live function and
     persists a non-empty result. Always returns a list (never None).
     """
-    normalized = normalize_provider(provider) or (provider or "")
-    if not normalized:
+    requested = str(provider or "").strip().lower()
+    canonical_identity = _canonical_named_custom_catalog_identity(provider)
+    catalog_runtime = _resolve_named_custom_catalog_runtime(
+        provider,
+        canonical_identity=canonical_identity,
+    )
+    # A named custom provider's requested identity is the cache namespace.
+    # Never collapse it to the canonical runtime class ("custom"), because two
+    # routes can intentionally share one URL while carrying different keys.
+    cache_identity = canonical_identity or normalize_provider(provider)
+    if not cache_identity:
         return []
 
     cache = _load_provider_models_cache()
-    fp = _credential_fingerprint(normalized)
-    entry = cache.get(normalized)
+    fp = _credential_fingerprint(
+        cache_identity,
+        catalog_runtime=catalog_runtime,
+    )
+    entry = cache.get(cache_identity)
     now = time.time()
 
     if (
@@ -2964,9 +3121,13 @@ def cached_provider_model_ids(
         return list(entry["models"])
 
     # Cache miss / stale / forced refresh — call the live path.
-    live = provider_model_ids(normalized, force_refresh=force_refresh)
+    live = provider_model_ids(
+        cache_identity,
+        force_refresh=force_refresh,
+        _catalog_runtime=catalog_runtime,
+    )
     if live:
-        cache[normalized] = {
+        cache[cache_identity] = {
             "fp": fp,
             "at": now,
             "models": list(live),
@@ -3001,9 +3162,20 @@ def clear_provider_models_cache(provider: Optional[str] = None) -> None:
                 path.unlink()
             return
         cache = _load_provider_models_cache()
-        normalized = normalize_provider(provider) or provider or ""
-        if normalized in cache:
-            del cache[normalized]
+        canonical_identity = _canonical_named_custom_catalog_identity(provider)
+        raw_identity = str(provider or "").strip().lower()
+        normalized = normalize_provider(provider) or raw_identity
+        identities = {
+            identity
+            for identity in (canonical_identity, normalized, raw_identity)
+            if identity
+        }
+        changed = False
+        for identity in identities:
+            if identity in cache:
+                del cache[identity]
+                changed = True
+        if changed:
             _save_provider_models_cache(cache)
     except Exception:
         pass

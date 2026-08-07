@@ -637,11 +637,18 @@ class SessionManager:
             kwargs.update(
                 {
                     "provider": runtime.get("provider"),
+                    "requested_provider": (
+                        runtime.get("requested_provider")
+                        or requested_provider
+                        or config_provider
+                    ),
                     "api_mode": api_mode or runtime.get("api_mode"),
                     "base_url": base_url or runtime.get("base_url"),
                     "api_key": runtime.get("api_key"),
                     "command": runtime.get("command"),
                     "args": list(runtime.get("args") or []),
+                    "credential_pool": runtime.get("credential_pool"),
+                    "request_overrides": runtime.get("request_overrides"),
                 }
             )
         except Exception:

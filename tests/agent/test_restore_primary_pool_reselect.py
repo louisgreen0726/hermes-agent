@@ -103,7 +103,9 @@ class TestRestorePrimaryPoolReselect:
             "compressor_base_url": "https://chatgpt.com/backend-api/codex",
             "compressor_api_key": "original-key-entry-1",
             "compressor_provider": "openai-codex",
+            "compressor_requested_provider": "openai-codex",
             "compressor_context_length": 128000,
+            "compressor_api_mode": "codex_responses",
             "compressor_threshold_tokens": 0.8,
         }
 
@@ -161,6 +163,9 @@ class TestRestorePrimaryPoolReselect:
 
         assert result is True
         assert agent.api_key == "original-key-entry-1"
+        update_kwargs = agent.context_compressor.update_model.call_args.kwargs
+        assert update_kwargs["requested_provider"] == "openai-codex"
+        assert update_kwargs["api_mode"] == "codex_responses"
 
     def test_restore_with_empty_pool_uses_snapshot(self):
         """When pool exists but has no available entries, use snapshot key."""

@@ -135,6 +135,19 @@ _MODEL_CACHE_TTL = 3600
 _endpoint_model_metadata_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
 _endpoint_model_metadata_cache_time: Dict[str, float] = {}
 _ENDPOINT_MODEL_CACHE_TTL = 300
+
+
+def _credential_fingerprint(api_key: Any) -> str:
+    """Return a stable, non-secret discriminator for an API credential."""
+    material = str(api_key or "").encode("utf-8", errors="replace")
+    return hashlib.blake2b(material, digest_size=8).hexdigest()
+
+
+def _endpoint_model_metadata_cache_key(base_url: str, api_key: str) -> str:
+    """Return a non-secret key for one endpoint credential scope."""
+    return f"{base_url}#{_credential_fingerprint(api_key)}"
+
+
 # Bounded-lifetime cache: after the first successful probe we remember the
 # server type so subsequent refreshes skip the full waterfall (no more 404
 # spam every 5 minutes on non-matching endpoints like /api/v1/models on vllm).
@@ -619,6 +632,8 @@ def _maybe_cache_local_context_length(
     model: str,
     base_url: str,
     length: int,
+    *,
+    cache_scope: str = "",
 ) -> None:
     """Persist a locally probed context length only when it meets Hermes minimum.
 
@@ -628,7 +643,8 @@ def _maybe_cache_local_context_length(
     as if they were valid operating limits.
     """
     if length >= MINIMUM_CONTEXT_LENGTH:
-        save_context_length(model, base_url, length)
+        cache_kwargs = {"cache_scope": cache_scope} if cache_scope else {}
+        save_context_length(model, base_url, length, **cache_kwargs)
 
 
 def _reconcile_local_cached_context_length(
@@ -636,6 +652,8 @@ def _reconcile_local_cached_context_length(
     base_url: str,
     cached: int,
     api_key: str = "",
+    *,
+    cache_scope: str = "",
 ) -> int:
     """Return *cached* unless a live local probe reports a different limit.
 
@@ -648,6 +666,7 @@ def _reconcile_local_cached_context_length(
     entries but are not persisted — startup should reject them, not bless a
     sub-64K window as config.
     """
+    cache_kwargs = {"cache_scope": cache_scope} if cache_scope else {}
     live_ctx = _query_local_context_length(model, base_url, api_key=api_key)
     if live_ctx and live_ctx > 0 and live_ctx != cached:
         if live_ctx < MINIMUM_CONTEXT_LENGTH:
@@ -656,14 +675,20 @@ def _reconcile_local_cached_context_length(
                 "invalidating stale cache — agent init should reject",
                 model, base_url, f"{live_ctx:,}", f"{MINIMUM_CONTEXT_LENGTH:,}",
             )
-            _invalidate_cached_context_length(model, base_url)
+            _invalidate_cached_context_length(
+                model, base_url, api_key=api_key, **cache_kwargs
+            )
             return live_ctx
         logger.info(
             "Reconciling stale local cache entry %s@%s: %s -> %s (live probe)",
             model, base_url, f"{cached:,}", f"{live_ctx:,}",
         )
-        _invalidate_cached_context_length(model, base_url)
-        _maybe_cache_local_context_length(model, base_url, live_ctx)
+        _invalidate_cached_context_length(
+            model, base_url, api_key=api_key, **cache_kwargs
+        )
+        _maybe_cache_local_context_length(
+            model, base_url, live_ctx, **cache_kwargs
+        )
         return live_ctx
     return cached
 
@@ -1000,16 +1025,18 @@ def fetch_endpoint_model_metadata(
     """Fetch model metadata from an OpenAI-compatible ``/models`` endpoint.
 
     This is used for explicit custom endpoints where hardcoded global model-name
-    defaults are unreliable. Results are cached in memory per base URL.
+    defaults are unreliable. Results are cached per base URL and credential so
+    two API keys on one relay cannot share entitlement-specific metadata.
     """
     normalized = _normalize_base_url(base_url)
     if not normalized or _is_openrouter_base_url(normalized):
         return {}
     _ensure_requests()
+    cache_key = _endpoint_model_metadata_cache_key(normalized, api_key)
 
     if not force_refresh:
-        cached = _endpoint_model_metadata_cache.get(normalized)
-        cached_at = _endpoint_model_metadata_cache_time.get(normalized, 0)
+        cached = _endpoint_model_metadata_cache.get(cache_key)
+        cached_at = _endpoint_model_metadata_cache_time.get(cache_key, 0)
         if cached is not None and (time.time() - cached_at) < _ENDPOINT_MODEL_CACHE_TTL:
             return cached
 
@@ -1070,8 +1097,8 @@ def fetch_endpoint_model_metadata(
                     if isinstance(alt_id, str) and alt_id and alt_id != model_id:
                         _add_model_aliases(cache, alt_id, entry)
 
-                _endpoint_model_metadata_cache[normalized] = cache
-                _endpoint_model_metadata_cache_time[normalized] = time.time()
+                _endpoint_model_metadata_cache[cache_key] = cache
+                _endpoint_model_metadata_cache_time[cache_key] = time.time()
                 return cache
         except Exception as exc:
             last_error = exc
@@ -1124,16 +1151,16 @@ def fetch_endpoint_model_metadata(
                 except Exception:
                     pass
 
-            _endpoint_model_metadata_cache[normalized] = cache
-            _endpoint_model_metadata_cache_time[normalized] = time.time()
+            _endpoint_model_metadata_cache[cache_key] = cache
+            _endpoint_model_metadata_cache_time[cache_key] = time.time()
             return cache
         except Exception as exc:
             last_error = exc
 
     if last_error:
         logger.debug("Failed to fetch model metadata from %s/models: %s", normalized, last_error)
-    _endpoint_model_metadata_cache[normalized] = {}
-    _endpoint_model_metadata_cache_time[normalized] = time.time()
+    _endpoint_model_metadata_cache[cache_key] = {}
+    _endpoint_model_metadata_cache_time[cache_key] = time.time()
     return {}
 
 
@@ -1166,6 +1193,48 @@ def _get_context_cache_path() -> Path:
     return get_hermes_home() / "context_length_cache.yaml"
 
 
+def _named_custom_context_cache_scope(
+    provider_identity: Optional[str],
+    api_key: Any,
+) -> str:
+    """Return a non-secret cache scope for one named custom route.
+
+    The provider identity keeps two named entries separate even when neither
+    needs authentication. Including a key fingerprint also handles a key being
+    rotated to a different entitlement set under the same saved provider.
+    """
+    identity = str(provider_identity or "").strip().casefold()
+    if identity in {"", "auto", "custom"}:
+        return ""
+    credential = api_key if isinstance(api_key, str) else ""
+    if credential == "no-key-required":
+        credential = ""
+    material = f"{identity}\0{credential}".encode("utf-8", errors="replace")
+    return hashlib.blake2b(material, digest_size=8).hexdigest()
+
+
+def get_context_cache_scope(
+    *,
+    provider: str = "",
+    requested_provider: Optional[str] = None,
+    api_key: Any = "",
+) -> str:
+    """Return the persistent context-cache scope for one runtime route.
+
+    Keep the scope decision in one place so a value learned after a provider
+    error is written under exactly the same key that the normal resolver reads.
+    Only named custom routes are scoped; legacy bare ``custom`` sessions keep
+    their URL-only compatibility behavior.
+    """
+    provider_norm = str(provider or "").strip().casefold()
+    if provider_norm == "custom" or provider_norm.startswith("custom:"):
+        identity = requested_provider
+        if not identity and provider_norm.startswith("custom:"):
+            identity = provider
+        return _named_custom_context_cache_scope(identity, api_key)
+    return ""
+
+
 def _load_context_cache() -> Dict[str, int]:
     """Load the model+provider -> context_length cache from disk."""
     path = _get_context_cache_path()
@@ -1180,23 +1249,37 @@ def _load_context_cache() -> Dict[str, int]:
         return {}
 
 
-def _context_cache_key(model: str, base_url: str) -> str:
-    """Canonical ``model@base_url`` key for the persistent context cache.
+def _context_cache_key(
+    model: str,
+    base_url: str,
+    *,
+    cache_scope: str = "",
+) -> str:
+    """Canonical key for the persistent context cache.
 
     Trailing slashes are stripped so ``http://host/v1`` and
     ``http://host/v1/`` share one entry instead of creating duplicates
-    that can go stale independently.
+    that can go stale independently. Named custom providers append a hashed
+    credential/identity scope because one relay URL can expose different
+    limits to different API keys.
     """
-    return f"{model}@{(base_url or '').rstrip('/')}"
+    key = f"{model}@{(base_url or '').rstrip('/')}"
+    return f"{key}#{cache_scope}" if cache_scope else key
 
 
-def save_context_length(model: str, base_url: str, length: int) -> None:
+def save_context_length(
+    model: str,
+    base_url: str,
+    length: int,
+    *,
+    cache_scope: str = "",
+) -> None:
     """Persist a discovered context length for a model+provider combo.
 
     Cache key is ``model@base_url`` so the same model name served from
     different providers can have different limits.
     """
-    key = _context_cache_key(model, base_url)
+    key = _context_cache_key(model, base_url, cache_scope=cache_scope)
     cache = _load_context_cache()
     if cache.get(key) == length:
         return  # already stored
@@ -1211,13 +1294,24 @@ def save_context_length(model: str, base_url: str, length: int) -> None:
         logger.debug("Failed to save context length cache: %s", e)
 
 
-def get_cached_context_length(model: str, base_url: str) -> Optional[int]:
+def get_cached_context_length(
+    model: str,
+    base_url: str,
+    *,
+    cache_scope: str = "",
+) -> Optional[int]:
     """Look up a previously discovered context length for model+provider."""
-    key = _context_cache_key(model, base_url)
+    key = _context_cache_key(model, base_url, cache_scope=cache_scope)
     cache = _load_context_cache()
     hit = cache.get(key)
     if hit is not None:
         return hit
+    # Scoped named-provider lookups deliberately do not consume old URL-only
+    # rows: those rows are ambiguous when multiple credentials share a relay.
+    # They remain readable by legacy/bare-custom callers.
+    if cache_scope:
+        return None
+
     # Legacy rows written before key normalization may carry a trailing
     # slash — honor them rather than re-probing. Checked regardless of the
     # caller's slash form: the row's shape and the caller's shape can differ
@@ -1231,21 +1325,39 @@ def get_cached_context_length(model: str, base_url: str) -> Optional[int]:
     return None
 
 
-def _invalidate_cached_context_length(model: str, base_url: str) -> None:
+def _invalidate_cached_context_length(
+    model: str,
+    base_url: str,
+    *,
+    api_key: str = "",
+    cache_scope: str = "",
+) -> None:
     """Drop a stale cache entry so it gets re-resolved on the next lookup."""
-    key = _context_cache_key(model, base_url)
+    key = _context_cache_key(model, base_url, cache_scope=cache_scope)
     cache = _load_context_cache()
     # Invalidation must also drop the in-memory TTL probe entries for this
     # pair — otherwise the next resolution inside the TTL window reuses the
     # very value we just declared stale and re-persists it.
     bare = _strip_provider_prefix(model)
     stripped = (base_url or "").rstrip("/")
-    _LOCAL_CTX_PROBE_CACHE.pop((bare, stripped), None)
-    _LOCAL_CTX_PROBE_CACHE.pop(("ollama_show", bare, stripped), None)
+    credential_scope = _credential_fingerprint(api_key)
+    # Drop both the pre-isolation shape and the credential-scoped shape. The
+    # former can still exist when a long-lived process was upgraded in place;
+    # the latter is the active key and must not be allowed to resurrect the
+    # stale value inside its TTL window.
+    for probe_key in (
+        (bare, stripped),
+        (bare, stripped, credential_scope),
+        ("ollama_show", bare, stripped),
+        ("ollama_show", bare, stripped, credential_scope),
+    ):
+        _LOCAL_CTX_PROBE_CACHE.pop(probe_key, None)
     # Clear every key shape for this pair: canonical, the caller's literal
     # form, and the slashed legacy form — same set get_cached_context_length
     # consults, so a lookup can never resurrect a row invalidation missed.
-    stale_keys = {key, f"{model}@{base_url}", f"{key}/"}
+    stale_keys = {key}
+    if not cache_scope:
+        stale_keys.update({f"{model}@{base_url}", f"{key}/"})
     if not any(k in cache for k in stale_keys):
         return
     for k in stale_keys:
@@ -1658,7 +1770,12 @@ def _query_ollama_api_show(model: str, base_url: str, api_key: str = "") -> Opti
     # Namespaced cache key: shares the TTL store with
     # _query_local_context_length but never collides with its (model, url)
     # keys — the two probes can return different values for the same pair.
-    cache_key = ("ollama_show", _strip_provider_prefix(model), base_url.rstrip("/"))
+    cache_key = (
+        "ollama_show",
+        _strip_provider_prefix(model),
+        base_url.rstrip("/"),
+        _credential_fingerprint(api_key),
+    )
     now = _time.monotonic()
     cached = _LOCAL_CTX_PROBE_CACHE.get(cache_key)
     if cached is not None and (now - cached[1]) < _LOCAL_CTX_PROBE_TTL_SECONDS:
@@ -1766,7 +1883,11 @@ def _query_local_context_length(model: str, base_url: str, api_key: str = "") ->
     """
     import time as _time
 
-    cache_key = (_strip_provider_prefix(model), base_url.rstrip("/"))
+    cache_key = (
+        _strip_provider_prefix(model),
+        base_url.rstrip("/"),
+        _credential_fingerprint(api_key),
+    )
     now = _time.monotonic()
     cached = _LOCAL_CTX_PROBE_CACHE.get(cache_key)
     if cached is not None and (now - cached[1]) < _LOCAL_CTX_PROBE_TTL_SECONDS:
@@ -2190,6 +2311,7 @@ def get_model_context_length(
     config_context_length: int | None = None,
     provider: str = "",
     custom_providers: list | None = None,
+    requested_provider: str | None = None,
 ) -> int:
     """Get the context length for a model.
 
@@ -2251,10 +2373,27 @@ def get_model_context_length(
                     api_key=rt.get("api_key", "") or "",
                     provider=rt.get("provider") or agg_provider,
                     custom_providers=effective_custom_providers,
+                    requested_provider=rt.get("requested_provider") or agg_provider,
                 )
         except Exception:
             logger.debug("MoA aggregator context-length resolution failed", exc_info=True)
         # Fall through to the generic default if aggregator resolution failed.
+
+    # Named custom routes carry a routable identity separately from the
+    # resolved billing class (``provider == custom``).  Use that identity for
+    # every config lookup so same-URL sibling entries cannot lend their
+    # context/transport settings to this request.
+    _custom_provider_identity = requested_provider
+    if not _custom_provider_identity and str(provider or "").strip().lower().startswith("custom:"):
+        _custom_provider_identity = provider
+    _custom_cache_scope = get_context_cache_scope(
+        provider=provider,
+        requested_provider=_custom_provider_identity,
+        api_key=api_key,
+    )
+    _cache_scope_kwargs = (
+        {"cache_scope": _custom_cache_scope} if _custom_cache_scope else {}
+    )
 
     # 0b. custom_providers per-model override — check before any probe.
     # This closes the gap where /model switch and display paths used to fall
@@ -2267,6 +2406,7 @@ def get_model_context_length(
                 model=model,
                 base_url=base_url,
                 custom_providers=custom_providers,
+                provider_identity=_custom_provider_identity,
             )
             if cp_ctx:
                 return cp_ctx
@@ -2309,7 +2449,7 @@ def get_model_context_length(
     # Codex OAuth is excluded because the authenticated /models catalogue is
     # account-specific and a fallback must never suppress later revalidation.
     if base_url and not _skip_persistent_context_cache(base_url, provider):
-        cached = get_cached_context_length(model, base_url)
+        cached = get_cached_context_length(model, base_url, **_cache_scope_kwargs)
         if cached is not None:
             # Invalidate stale 32k cache entries for Kimi-family models.
             if cached <= 32768 and _model_name_suggests_kimi(model):
@@ -2318,7 +2458,9 @@ def get_model_context_length(
                     "re-resolving via hardcoded defaults",
                     model, base_url, f"{cached:,}",
                 )
-                _invalidate_cached_context_length(model, base_url)
+                _invalidate_cached_context_length(
+                    model, base_url, api_key=api_key, **_cache_scope_kwargs
+                )
             # Invalidate stale ≤204,800 cache entries for MiniMax-M3.  Pre-catalog
             # builds resolved M3 via the generic ``minimax`` catch-all (204,800)
             # and persisted it before the ``minimax-m3`` (1M) entry existed; that
@@ -2331,7 +2473,9 @@ def get_model_context_length(
                     "re-resolving via hardcoded defaults",
                     model, base_url, f"{cached:,}",
                 )
-                _invalidate_cached_context_length(model, base_url)
+                _invalidate_cached_context_length(
+                    model, base_url, api_key=api_key, **_cache_scope_kwargs
+                )
             # Invalidate stale ≤256,000 cache entries for Grok-4.3.  The
             # ``grok-4.3`` (1M) entry was added to DEFAULT_CONTEXT_LENGTHS on
             # 2026-05-15; prior to that, grok-4.3 slugs resolved via the
@@ -2344,7 +2488,9 @@ def get_model_context_length(
                     "re-resolving via hardcoded defaults",
                     model, base_url, f"{cached:,}",
                 )
-                _invalidate_cached_context_length(model, base_url)
+                _invalidate_cached_context_length(
+                    model, base_url, api_key=api_key, **_cache_scope_kwargs
+                )
             # Nous Portal: the portal /v1/models endpoint is authoritative.
             # Bypass the persistent cache so step 5b can always reconcile
             # against it — this corrects pre-fix entries seeded from the
@@ -2378,7 +2524,9 @@ def get_model_context_length(
                             f"{cached:,}",
                             f"{bedrock_ctx:,}",
                         )
-                        _invalidate_cached_context_length(model, base_url)
+                        _invalidate_cached_context_length(
+                            model, base_url, api_key=api_key, **_cache_scope_kwargs
+                        )
                         return bedrock_ctx
                 except ImportError:
                     pass
@@ -2386,7 +2534,11 @@ def get_model_context_length(
             else:
                 if is_local_endpoint(base_url):
                     return _reconcile_local_cached_context_length(
-                        model, base_url, cached, api_key=api_key,
+                        model,
+                        base_url,
+                        cached,
+                        api_key=api_key,
+                        **_cache_scope_kwargs,
                     )
                 return cached
 
@@ -2415,7 +2567,9 @@ def get_model_context_length(
             # every turn — keyed by base_url when present, else a synthetic
             # bedrock:// key so display/offline paths share the entry.
             cache_key_url = base_url or "bedrock://"
-            cached = get_cached_context_length(model, cache_key_url)
+            cached = get_cached_context_length(
+                model, cache_key_url, **_cache_scope_kwargs
+            )
             if cached is not None:
                 return cached
             # Resolve region from the base_url host first, then the standard
@@ -2435,14 +2589,16 @@ def get_model_context_length(
                 # Only persist probe-derived values (region present); a pure
                 # table fallback shouldn't poison the cache against a later
                 # successful probe.
-                save_context_length(model, cache_key_url, ctx)
+                save_context_length(
+                    model, cache_key_url, ctx, **_cache_scope_kwargs
+                )
             return ctx
 
     if provider == "novita" or (base_url and base_url_host_matches(base_url, "api.novita.ai")):
         ctx = _resolve_endpoint_context_length(model, base_url or "https://api.novita.ai/openai/v1", api_key=api_key)
         if ctx is not None:
             if base_url:
-                save_context_length(model, base_url, ctx)
+                save_context_length(model, base_url, ctx, **_cache_scope_kwargs)
             return ctx
 
     # 2. Active endpoint metadata for truly custom/unknown endpoints.
@@ -2461,14 +2617,19 @@ def get_model_context_length(
             ctx = _query_ollama_api_show(model, base_url, api_key=api_key)
             if ctx is not None:
                 if not _skip_persistent_context_cache(base_url, provider):
-                    save_context_length(model, base_url, ctx)
+                    save_context_length(model, base_url, ctx, **_cache_scope_kwargs)
                 return ctx
             # 3. Try querying local server directly
             if is_local_endpoint(base_url):
                 local_ctx = _query_local_context_length(model, base_url, api_key=api_key)
                 if local_ctx and local_ctx > 0:
                     if not _skip_persistent_context_cache(base_url, provider):
-                        _maybe_cache_local_context_length(model, base_url, local_ctx)
+                        _maybe_cache_local_context_length(
+                            model,
+                            base_url,
+                            local_ctx,
+                            **_cache_scope_kwargs,
+                        )
                     return local_ctx
             logger.info(
                 "Could not detect context length for model %r at %s — "
@@ -2545,7 +2706,7 @@ def get_model_context_length(
             # Kimi/Qwen DEFAULT_CONTEXT_LENGTHS overrides exist — we don't
             # want it leaking into the persistent cache for Nous URLs.
             if base_url and source == "portal":
-                save_context_length(model, base_url, ctx)
+                save_context_length(model, base_url, ctx, **_cache_scope_kwargs)
             return ctx
     if effective_provider == "openai-codex":
         # Codex OAuth enforces lower context limits than the direct OpenAI
@@ -2559,7 +2720,9 @@ def get_model_context_length(
             # persist. The static fallback is deliberately runtime-only so a
             # transient OAuth/network failure cannot poison future probes.
             if base_url and codex_source == "live":
-                save_context_length(model, base_url, codex_ctx)
+                save_context_length(
+                    model, base_url, codex_ctx, **_cache_scope_kwargs
+                )
             return codex_ctx
     if effective_provider == "gmi" and base_url:
         # GMI exposes authoritative context_length via /models, but it is not
@@ -2588,7 +2751,7 @@ def get_model_context_length(
             ctx = _query_ollama_api_show(model, base_url, api_key=api_key)
             if ctx is not None:
                 if not _skip_persistent_context_cache(base_url, provider):
-                    save_context_length(model, base_url, ctx)
+                    save_context_length(model, base_url, ctx, **_cache_scope_kwargs)
                 return ctx
     # 5f. OpenRouter live /models metadata — authoritative for OpenRouter-routed
     # models. OpenRouter's catalog carries per-model context_length (e.g.
@@ -2654,7 +2817,12 @@ def get_model_context_length(
         local_ctx = _query_local_context_length(model, base_url, api_key=api_key)
         if local_ctx and local_ctx > 0:
             if not _skip_persistent_context_cache(base_url, provider):
-                _maybe_cache_local_context_length(model, base_url, local_ctx)
+                _maybe_cache_local_context_length(
+                    model,
+                    base_url,
+                    local_ctx,
+                    **_cache_scope_kwargs,
+                )
             return local_ctx
 
     # 8. Hardcoded defaults (fuzzy match — longest key first for specificity)
@@ -2679,6 +2847,7 @@ async def get_model_context_length_async(
     config_context_length: int | None = None,
     provider: str = "",
     custom_providers: list | None = None,
+    requested_provider: str | None = None,
 ) -> int:
     """Async variant of get_model_context_length.
 
@@ -2698,6 +2867,7 @@ async def get_model_context_length_async(
         config_context_length=config_context_length,
         provider=provider,
         custom_providers=custom_providers,
+        requested_provider=requested_provider,
     )
 
 

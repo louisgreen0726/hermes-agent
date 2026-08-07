@@ -1692,20 +1692,35 @@ class ContextCompressor(ContextEngine):
         api_key: Any = "",
         provider: str = "",
         api_mode: str = "",
+        requested_provider: str | None = None,
         max_tokens: int | None = None,
     ) -> None:
         """Update model info after a model switch or fallback activation."""
+        old_requested_provider = getattr(self, "requested_provider", "")
+        if requested_provider is None:
+            # Preserve the identity for legacy callers that only refresh the
+            # current route's context length.  A genuine route switch that
+            # omits the new field must clear it rather than borrow a sibling.
+            same_route = (
+                model == self.model
+                and provider == self.provider
+                and base_url == self.base_url
+            )
+            requested_provider = old_requested_provider if same_route else ""
         runtime_changed = any((
             model != self.model,
             provider != self.provider,
             base_url != self.base_url,
+            api_key != self.api_key,
             api_mode != self.api_mode,
+            requested_provider != old_requested_provider,
         ))
         self.model = model
         self.base_url = base_url
         self.api_key = api_key
         self.provider = provider
         self.api_mode = api_mode
+        self.requested_provider = requested_provider or ""
         self.context_length = context_length
         # Re-resolve per-model threshold for the NEW model, then re-apply the
         # small-context threshold floor. Starting from _config_threshold_percent
@@ -1767,6 +1782,11 @@ class ContextCompressor(ContextEngine):
         # restart doesn't resurrect strikes this recalibration just voided.
         self._record_ineffective_compression_verdict(0)
         if runtime_changed:
+            # Probe results are route-specific too.  In particular, two keys
+            # on one relay can report different limits, so an old flag must
+            # never cause the new route's successful response to be persisted.
+            self._context_probed = False
+            self._context_probe_persistable = False
             self._fallback_compression_streak = 0
             self._persist_fallback_compression_streak()
             # Failure cooldowns are scoped to the model/provider that failed.
@@ -1910,6 +1930,7 @@ class ContextCompressor(ContextEngine):
         config_context_length: int | None = None,
         provider: str = "",
         api_mode: str = "",
+        requested_provider: str | None = None,
         abort_on_summary_failure: bool = False,
         max_tokens: int | None = None,
         model_thresholds: dict[str, float] | None = None,
@@ -1924,6 +1945,7 @@ class ContextCompressor(ContextEngine):
         self.api_key = api_key
         self.provider = provider
         self.api_mode = api_mode
+        self.requested_provider = requested_provider or ""
         # Per-model threshold overrides (longest substring match wins).
         # Stored as a plain dict; resolved in _resolve_threshold(), then the
         # small-context floor is applied on top.
@@ -1992,6 +2014,7 @@ class ContextCompressor(ContextEngine):
             model, base_url=base_url, api_key=api_key,
             config_context_length=config_context_length,
             provider=provider,
+            requested_provider=requested_provider,
         )
         # Small-context threshold floor: models under 512K trigger at >=75%
         # so compaction doesn't fire with half the window still free (the

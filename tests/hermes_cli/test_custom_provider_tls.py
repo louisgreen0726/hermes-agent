@@ -2,6 +2,7 @@
 
 from hermes_cli.config import (
     apply_custom_provider_tls_to_client_kwargs,
+    custom_provider_matches_identity,
     get_custom_provider_tls_settings,
 )
 
@@ -84,3 +85,43 @@ def test_get_custom_provider_tls_settings_preserves_extra_path_segment():
         "https://ollama.example.com/v1",
         custom_providers=providers,
     ) == {}
+
+
+def test_same_url_tls_settings_are_scoped_by_provider_identity():
+    providers = [
+        {
+            "name": "Relay A",
+            "base_url": "https://relay.example.com/v1",
+            "ssl_ca_cert": "/etc/ssl/relay-a.pem",
+        },
+        {
+            "name": "Relay B",
+            "base_url": "https://relay.example.com/v1",
+            "ssl_verify": False,
+        },
+    ]
+
+    assert get_custom_provider_tls_settings(
+        "https://relay.example.com/v1",
+        custom_providers=providers,
+        provider_identity="custom:relay-b",
+    ) == {"ssl_verify": False}
+    assert get_custom_provider_tls_settings(
+        "https://relay.example.com/v1",
+        custom_providers=providers,
+        provider_identity="custom:relay-a",
+    ) == {"ssl_ca_cert": "/etc/ssl/relay-a.pem"}
+
+
+def test_custom_identity_accepts_migrated_nested_prefixes_but_not_bad_spacing():
+    entry = {"name": "Prefixed Key", "provider_key": "custom:Prefixed Key"}
+
+    for identity in (
+        "custom:Prefixed Key",
+        "custom:custom:Prefixed Key",
+        "custom:Prefixed-Key",
+    ):
+        assert custom_provider_matches_identity(entry, identity)
+
+    assert not custom_provider_matches_identity(entry, "custom: Prefixed Key")
+    assert not custom_provider_matches_identity(entry, "custom:\tPrefixed Key")

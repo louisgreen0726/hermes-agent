@@ -212,6 +212,8 @@ def test_switch_model_accepts_explicit_bare_custom_current_endpoint(monkeypatch)
 
     assert result.success is True
     assert result.target_provider == "custom"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom"
     assert result.provider_label == "Custom endpoint"
     assert result.new_model == "gpt-4o-mini"
     assert result.base_url == "https://www.ccsub.net/v1"
@@ -251,6 +253,8 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
         lambda **kwargs: {
             "api_key": "no-key-required",
             "base_url": "http://127.0.0.1:4141/v1",
+            "provider": "custom",
+            "requested_provider": kwargs["requested"],
             "api_mode": "chat_completions",
         },
     )
@@ -277,10 +281,80 @@ def test_switch_model_accepts_explicit_named_custom_provider(monkeypatch):
 
     assert result.success is True
     assert result.target_provider == "custom:local-(127.0.0.1:4141)"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom:local-(127.0.0.1:4141)"
     assert result.provider_label == "Local (127.0.0.1:4141)"
     assert result.new_model == "rotator-openrouter-coding"
     assert result.base_url == "http://127.0.0.1:4141/v1"
     assert result.api_key == "no-key-required"
+
+
+def test_named_custom_validation_fallback_does_not_borrow_sibling_catalog(
+    monkeypatch,
+):
+    """A same-URL sibling cannot authorize a model for the selected provider."""
+    relay_url = "https://relay.example.com/v1"
+    custom_providers = [
+        {
+            "name": "Relay A",
+            "base_url": relay_url,
+            "models": ["model-a"],
+        },
+        {
+            "name": "Relay B",
+            "base_url": relay_url,
+            "models": ["model-b"],
+        },
+    ]
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider",
+        lambda **kwargs: {
+            "api_key": f"key-for-{kwargs['requested']}",
+            "base_url": relay_url,
+            "provider": "custom",
+            "requested_provider": kwargs["requested"],
+            "api_mode": "chat_completions",
+        },
+    )
+    monkeypatch.setattr(
+        "hermes_cli.models.validate_requested_model",
+        lambda *args, **kwargs: {
+            "accepted": False,
+            "persist": False,
+            "recognized": False,
+            "message": "not exposed by this credential",
+        },
+    )
+    monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "hermes_cli.model_switch.get_model_capabilities",
+        lambda *a, **k: None,
+    )
+
+    wrong_provider = switch_model(
+        raw_input="model-b",
+        current_provider="openrouter",
+        current_model="openai/gpt-5.4",
+        explicit_provider="custom:relay-a",
+        custom_providers=custom_providers,
+        user_providers={},
+    )
+    right_provider = switch_model(
+        raw_input="model-b",
+        current_provider="openrouter",
+        current_model="openai/gpt-5.4",
+        explicit_provider="custom:relay-b",
+        custom_providers=custom_providers,
+        user_providers={},
+    )
+
+    assert wrong_provider.success is False
+    assert wrong_provider.error_message == "not exposed by this credential"
+    assert right_provider.success is True
+    assert right_provider.runtime_provider == "custom"
+    assert right_provider.requested_provider == "custom:relay-b"
+    assert right_provider.api_key == "key-for-custom:relay-b"
 
 
 def test_picker_selection_resolves_named_custom_provider_model_id(monkeypatch):
@@ -290,6 +364,8 @@ def test_picker_selection_resolves_named_custom_provider_model_id(monkeypatch):
         lambda **kwargs: {
             "api_key": "test-key",
             "base_url": "https://token.sensenova.cn/v1",
+            "provider": "custom",
+            "requested_provider": kwargs["requested"],
             "api_mode": "chat_completions",
         },
     )
@@ -322,6 +398,8 @@ def test_picker_selection_resolves_named_custom_provider_model_id(monkeypatch):
 
     assert result.success is True
     assert result.target_provider == "custom:sensenova"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom:sensenova"
     assert result.new_model == "deepseek-v4-flash"
 
 
@@ -333,6 +411,8 @@ def test_grouped_legacy_manager_picker_resolves_concrete_provider(monkeypatch):
         return {
             "api_key": "test-key",
             "base_url": "https://louis.example/v1",
+            "provider": "custom",
+            "requested_provider": kwargs["requested"],
             "api_mode": "codex_responses",
         }
 
@@ -377,6 +457,8 @@ def test_grouped_legacy_manager_picker_resolves_concrete_provider(monkeypatch):
 
     assert result.success is True
     assert result.target_provider == "custom:louis/openai/gpt-5.6-codex"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom:louis/openai/gpt-5.6-codex"
     assert result.provider_label == "Louis"
     assert result.new_model == "openai/gpt-5.6-codex"
     assert result.base_url == "https://louis.example/v1"
@@ -425,6 +507,8 @@ def test_grouped_legacy_manager_numeric_slug_keeps_credential_group(monkeypatch)
         return {
             "api_key": "key-b",
             "base_url": "https://louis.example/v1",
+            "provider": "custom",
+            "requested_provider": kwargs["requested"],
             "api_mode": "chat_completions",
         }
 
@@ -468,6 +552,8 @@ def test_grouped_legacy_manager_numeric_slug_keeps_credential_group(monkeypatch)
 
     assert result.success is True
     assert result.target_provider == "custom:louis/model-b"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom:louis/model-b"
     assert result.provider_label == "Louis"
     assert result.new_model == "live-model"
     assert runtime_requests == ["custom:louis/model-b"]
@@ -1546,7 +1632,9 @@ def test_discovered_models_auto_saved_to_cache(monkeypatch):
     monkeypatch.setattr("hermes_cli.models.fetch_api_models", fake_fetch_api_models)
     monkeypatch.setattr(
         "hermes_cli.model_switch._save_discovered_models_to_config",
-        lambda api_url, model_ids: save_calls.append((api_url, model_ids)),
+        lambda api_url, model_ids, **kwargs: save_calls.append(
+            (api_url, model_ids, kwargs)
+        ),
     )
 
     custom_providers = [
@@ -1573,6 +1661,7 @@ def test_discovered_models_auto_saved_to_cache(monkeypatch):
     )
     assert save_calls[0][0] == "https://gateway.example.com/v1"
     assert save_calls[0][1] == ["discovered-a", "discovered-b", "discovered-c"]
+    assert save_calls[0][2]["provider_names"] == ["my-gateway"]
 
     gateway_prov = next(
         (p for p in providers if p.get("api_url") == "https://gateway.example.com/v1"),
@@ -1580,6 +1669,79 @@ def test_discovered_models_auto_saved_to_cache(monkeypatch):
     )
     assert gateway_prov is not None
     assert gateway_prov["models"] == ["discovered-a", "discovered-b", "discovered-c"]
+
+
+def test_same_url_distinct_credentials_keep_discovered_catalogs_after_reopen(
+    monkeypatch,
+):
+    """A live catalog belongs to the named provider, not just its URL."""
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr("hermes_cli.providers.HERMES_OVERLAYS", {})
+
+    relay_url = "https://relay.example.com/v1"
+    config = {
+        "custom_providers": [
+            {
+                "name": "Relay A",
+                "base_url": relay_url,
+                "api_key": "sk-relay-a",
+                "model": "model-a",
+                "models": [],
+            },
+            {
+                "name": "Relay B",
+                "base_url": relay_url,
+                "api_key": "sk-relay-b",
+                "model": "model-b",
+                "models": [],
+            },
+        ]
+    }
+    save_calls = []
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: config)
+    monkeypatch.setattr(
+        "hermes_cli.config.save_config",
+        lambda saved: save_calls.append(saved),
+    )
+    monkeypatch.setattr(
+        "hermes_cli.models.fetch_api_models",
+        lambda api_key, _base_url, **_kwargs: {
+            "sk-relay-a": ["model-a", "model-a-plus"],
+            "sk-relay-b": ["model-b", "model-b-plus"],
+        }[api_key],
+    )
+
+    list_authenticated_providers(
+        current_provider="custom:relay-a",
+        current_base_url=relay_url,
+        custom_providers=config["custom_providers"],
+        probe_custom_providers=True,
+    )
+
+    assert save_calls
+    persisted = {
+        entry["name"]: entry["models"]
+        for entry in config["custom_providers"]
+    }
+    assert persisted == {
+        "Relay A": ["model-a", "model-a-plus"],
+        "Relay B": ["model-b", "model-b-plus"],
+    }
+
+    reopened = list_authenticated_providers(
+        current_provider="custom:relay-a",
+        current_base_url=relay_url,
+        custom_providers=config["custom_providers"],
+        probe_custom_providers=False,
+    )
+    reopened_catalogs = {
+        row["slug"]: row["models"]
+        for row in reopened
+        if row.get("is_user_defined")
+    }
+    assert reopened_catalogs["custom:relay-a"] == ["model-a", "model-a-plus"]
+    assert reopened_catalogs["custom:relay-b"] == ["model-b", "model-b-plus"]
 
 
 def test_discovered_models_not_saved_on_empty_probe(monkeypatch):
@@ -1595,7 +1757,9 @@ def test_discovered_models_not_saved_on_empty_probe(monkeypatch):
     monkeypatch.setattr("hermes_cli.models.fetch_api_models", fake_fetch_api_models)
     monkeypatch.setattr(
         "hermes_cli.model_switch._save_discovered_models_to_config",
-        lambda api_url, model_ids: save_calls.append((api_url, model_ids)),
+        lambda api_url, model_ids, **kwargs: save_calls.append(
+            (api_url, model_ids, kwargs)
+        ),
     )
 
     custom_providers = [
@@ -1682,9 +1846,7 @@ def test_save_discovered_models_noop_on_empty_args(monkeypatch):
 
 
 def test_save_discovered_models_preserves_dict_form(monkeypatch):
-    """``_save_discovered_models_to_config`` must not replace a dict-form
-    ``models`` mapping (per-model metadata like ``context_length``) with
-    a flat list of strings (#67841)."""
+    """Discovery extends dict-form catalogs without erasing model metadata."""
     from hermes_cli.model_switch import _save_discovered_models_to_config
 
     save_calls = []
@@ -1708,20 +1870,20 @@ def test_save_discovered_models_preserves_dict_form(monkeypatch):
         },
     )
 
-    # Dict-form models must NOT be overwritten by discovered models
     _save_discovered_models_to_config(
         "https://gateway.example.com/v1",
         ["configured-model", "discovered-model"],
     )
-    assert save_calls == [], (
-        "Dict-form models must not be replaced with a flat list"
-    )
+    assert len(save_calls) == 1
+    models = save_calls[0]["custom_providers"][0]["models"]
+    assert models == {
+        "configured-model": {"context_length": 8192},
+        "discovered-model": {},
+    }
 
 
 def test_save_discovered_models_preserves_list_of_dicts_form(monkeypatch):
-    """``_save_discovered_models_to_config`` must not replace a list-of-dicts
-    ``models`` form (per-model metadata via ``[{id: ...}]``) with a flat list
-    of strings (#67841 sibling site)."""
+    """Discovery extends list-of-dicts catalogs without flattening metadata."""
     from hermes_cli.model_switch import _save_discovered_models_to_config
 
     save_calls = []
@@ -1746,14 +1908,86 @@ def test_save_discovered_models_preserves_list_of_dicts_form(monkeypatch):
         },
     )
 
-    # List-of-dicts models must NOT be overwritten by discovered models
     _save_discovered_models_to_config(
         "https://gateway.example.com/v1",
         ["configured-model", "discovered-model"],
     )
-    assert save_calls == [], (
-        "List-of-dicts models must not be replaced with a flat list"
+    assert len(save_calls) == 1
+    models = save_calls[0]["custom_providers"][0]["models"]
+    assert models == [
+        {"id": "configured-model", "context_length": 8192},
+        {"id": "other-model", "context_length": 4096},
+        {"id": "discovered-model"},
+    ]
+
+
+def test_keyed_provider_discovery_persists_each_same_url_catalog(monkeypatch):
+    """Section 3 must cache catalogs by provider key, never URL alone."""
+    monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
+    monkeypatch.setattr("hermes_cli.providers.HERMES_OVERLAYS", {})
+
+    relay_url = "https://relay.example.com/v1"
+    config = {
+        "providers": {
+            "relay-a-id": {
+                "name": "Relay A",
+                "base_url": relay_url,
+                "api_key": "sk-relay-a",
+                "models": {},
+            },
+            "relay-b-id": {
+                "name": "Relay B",
+                "base_url": relay_url,
+                "api_key": "sk-relay-b",
+                "models": {},
+            },
+        }
+    }
+    save_calls = []
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: config)
+    monkeypatch.setattr(
+        "hermes_cli.config.save_config", lambda saved: save_calls.append(saved)
     )
+    monkeypatch.setattr(
+        "hermes_cli.models.fetch_api_models",
+        lambda api_key, _base_url, **_kwargs: {
+            "sk-relay-a": ["model-a", "model-a-plus"],
+            "sk-relay-b": ["model-b", "model-b-plus"],
+        }[api_key],
+    )
+
+    list_authenticated_providers(
+        current_provider="relay-b-id",
+        current_base_url=relay_url,
+        user_providers=config["providers"],
+        custom_providers=[],
+        probe_custom_providers=True,
+    )
+
+    assert save_calls
+    assert config["providers"]["relay-a-id"]["models"] == {
+        "model-a": {},
+        "model-a-plus": {},
+    }
+    assert config["providers"]["relay-b-id"]["models"] == {
+        "model-b": {},
+        "model-b-plus": {},
+    }
+
+    reopened = list_authenticated_providers(
+        current_provider="relay-b-id",
+        current_base_url=relay_url,
+        user_providers=config["providers"],
+        custom_providers=[],
+        probe_custom_providers=False,
+    )
+    catalogs = {
+        row["slug"]: row["models"]
+        for row in reopened
+        if row.get("is_user_defined")
+    }
+    assert catalogs["relay-a-id"] == ["model-a", "model-a-plus"]
+    assert catalogs["relay-b-id"] == ["model-b", "model-b-plus"]
 
 
 def test_shared_url_different_display_names_are_separate_rows(monkeypatch):

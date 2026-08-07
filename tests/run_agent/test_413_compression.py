@@ -411,6 +411,89 @@ class TestHTTP413Compression:
         assert result["completed"] is True
         assert result["final_response"] == "Recovered after compression"
 
+    def test_named_custom_overflow_cache_is_route_scoped(
+        self, agent, tmp_path, monkeypatch
+    ):
+        """A learned provider limit must not overwrite its same-URL sibling."""
+        import yaml
+        from agent import model_metadata
+
+        cache_path = tmp_path / "context_length_cache.yaml"
+        monkeypatch.setattr(
+            model_metadata, "_get_context_cache_path", lambda: cache_path
+        )
+        relay_url = "https://relay.example.test/v1"
+        model = "shared-model"
+        scope_a = model_metadata.get_context_cache_scope(
+            provider="custom",
+            requested_provider="relay-a",
+            api_key="key-a",
+        )
+        scope_b = model_metadata.get_context_cache_scope(
+            provider="custom",
+            requested_provider="relay-b",
+            api_key="key-b",
+        )
+        model_metadata.save_context_length(
+            model, relay_url, 262_144, cache_scope=scope_a
+        )
+
+        agent.provider = "custom"
+        agent.requested_provider = "relay-b"
+        agent.model = model
+        agent.base_url = relay_url
+        agent.api_key = "key-b"
+        agent.context_compressor.update_model(
+            model=model,
+            context_length=262_144,
+            base_url=relay_url,
+            api_key="key-b",
+            provider="custom",
+            api_mode=agent.api_mode,
+            requested_provider="relay-b",
+        )
+
+        err_400 = Exception(
+            "Error code: 400 - This endpoint's maximum context length is "
+            "128000 tokens. However, you requested about 270460 tokens."
+        )
+        err_400.status_code = 400
+        ok_resp = _mock_response(
+            content="Recovered after compression",
+            finish_reason="stop",
+            usage={
+                "prompt_tokens": 50_000,
+                "completion_tokens": 100,
+                "total_tokens": 50_100,
+            },
+        )
+        agent.client.chat.completions.create.side_effect = [err_400, ok_resp]
+
+        with (
+            patch.object(agent, "_compress_context") as mock_compress,
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            mock_compress.return_value = (
+                [{"role": "user", "content": "hello"}],
+                "compressed prompt",
+            )
+            result = agent.run_conversation(
+                "hello",
+                conversation_history=[
+                    {"role": "user", "content": "previous question"},
+                    {"role": "assistant", "content": "previous answer"},
+                ],
+            )
+
+        assert result["completed"] is True
+        persisted = yaml.safe_load(cache_path.read_text())["context_lengths"]
+        assert persisted[f"{model}@{relay_url}#{scope_a}"] == 262_144
+        assert persisted[f"{model}@{relay_url}#{scope_b}"] == 128_000
+        assert "key-a" not in cache_path.read_text()
+        assert "key-b" not in cache_path.read_text()
+
     def test_400_reduce_length_triggers_compression(self, agent):
         """A 400 with 'reduce the length' should trigger compression."""
         err_400 = Exception(

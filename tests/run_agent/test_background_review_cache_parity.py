@@ -20,6 +20,7 @@ def _make_agent_stub(agent_cls):
     agent.model = "test-model"
     agent.platform = "test"
     agent.provider = "openai"
+    agent.requested_provider = "openai"
     agent.session_id = "sess-123"
     agent.quiet_mode = True
     agent._memory_store = None
@@ -213,6 +214,28 @@ def test_review_fork_inherits_parent_toolset_config():
         f"disabled_toolsets mismatch: {init_kwargs.get('disabled_toolsets')!r} "
         f"vs expected {agent.disabled_toolsets!r}"
     )
+
+
+def test_review_fork_preserves_named_custom_provider_identity():
+    import run_agent
+
+    agent = _make_agent_stub(run_agent.AIAgent)
+    agent.provider = "custom"
+    agent.requested_provider = "custom:relay-b"
+    captured = {}
+    recorder = _make_recorder_class(captured)
+
+    with patch.object(run_agent, "AIAgent", recorder), \
+         patch("threading.Thread", _SyncThread):
+        agent._spawn_background_review(
+            messages_snapshot=[],
+            review_memory=True,
+            review_skills=False,
+        )
+
+    init_kwargs = captured.get("init_kwargs", {})
+    assert init_kwargs["provider"] == "custom"
+    assert init_kwargs["requested_provider"] == "custom:relay-b"
 
 
 def test_review_fork_inherits_parent_reasoning_config():

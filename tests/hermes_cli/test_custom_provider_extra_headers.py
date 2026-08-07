@@ -186,6 +186,36 @@ def test_apply_extra_headers_noop_without_match():
     assert "default_headers" not in client_kwargs
 
 
+def test_same_url_extra_headers_are_scoped_by_provider_identity():
+    providers = [
+        {
+            "name": "Relay A",
+            "base_url": "https://relay.example.com/v1",
+            "extra_headers": {"X-Relay": "a"},
+        },
+        {
+            "name": "Relay B",
+            "base_url": "https://relay.example.com/v1",
+            "extra_headers": {"X-Relay": "b"},
+        },
+    ]
+
+    assert get_custom_provider_extra_headers(
+        "https://relay.example.com/v1",
+        custom_providers=providers,
+        provider_identity="custom:relay-b",
+    ) == {"X-Relay": "b"}
+
+    kwargs = {"base_url": "https://relay.example.com/v1"}
+    apply_custom_provider_extra_headers_to_client_kwargs(
+        kwargs,
+        kwargs["base_url"],
+        custom_providers=providers,
+        provider_identity="custom:relay-a",
+    )
+    assert kwargs["default_headers"] == {"X-Relay": "a"}
+
+
 def test_fetch_api_models_sends_extra_headers_to_models_probe(monkeypatch):
     captured = {}
 

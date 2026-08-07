@@ -106,3 +106,47 @@ async def test_direct_model_switch_offloads_to_thread(tmp_path, monkeypatch):
     # switch_model was offloaded to a worker thread, not run on the event loop.
     assert "_fake_switch" in offloaded
     assert result is not None and "nope" in result
+
+
+@pytest.mark.asyncio
+async def test_direct_model_switch_keeps_named_provider_from_session_override(
+    tmp_path, monkeypatch
+):
+    """A follow-up /model value must stay on the selected named custom route."""
+    from hermes_cli.model_switch import ModelSwitchResult
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {"model": {"default": "old-model", "provider": "openrouter"}}
+        ),
+        encoding="utf-8",
+    )
+
+    import gateway.run as gateway_run
+
+    monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
+    runner = _make_runner()
+    event = _make_event("/model next-model")
+    session_key = runner._session_key_for_source(event.source)
+    runner._session_model_overrides[session_key] = {
+        "model": "old-model",
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "key-b",
+    }
+    captured = {}
+
+    def _fake_switch(**kwargs):
+        captured.update(kwargs)
+        return ModelSwitchResult(success=False, error_message="stop after capture")
+
+    monkeypatch.setattr("hermes_cli.model_switch.switch_model", _fake_switch)
+
+    result = await runner._handle_model_command(event)
+
+    assert result is not None and "stop after capture" in result
+    assert captured["current_provider"] == "custom:relay-b"
+    assert captured["current_api_key"] == "key-b"

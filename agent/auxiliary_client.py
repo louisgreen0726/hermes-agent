@@ -131,7 +131,12 @@ _LOGGED_UNSUPPORTED_EXTPROC_KEYS: set = set()
 _LOGGED_UNSUPPORTED_OAUTH_KEYS: set = set()
 
 
-def _resolve_aux_verify(base_url: Optional[str]) -> Any:
+def _resolve_aux_verify(
+    base_url: Optional[str],
+    *,
+    provider_identity: Optional[str] = None,
+    provider_config_base_url: Optional[str] = None,
+) -> Any:
     """Resolve httpx ``verify`` for an auxiliary-client base_url.
 
     Mirrors the main client's TLS resolution so auxiliary calls (compression,
@@ -148,7 +153,9 @@ def _resolve_aux_verify(base_url: Optional[str]) -> Any:
         )
 
         tls = get_custom_provider_tls_settings(
-            str(base_url or ""), config=load_config_readonly()
+            str(provider_config_base_url or base_url or ""),
+            config=load_config_readonly(),
+            provider_identity=provider_identity,
         )
         return resolve_httpx_verify(
             ca_bundle=tls.get("ssl_ca_cert"),
@@ -166,6 +173,8 @@ def _openai_http_client_kwargs(
     base_url: Optional[str],
     *,
     async_mode: bool = False,
+    provider_identity: Optional[str] = None,
+    provider_config_base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Inject keepalive httpx client with env-only proxy (not macOS system proxy)."""
     try:
@@ -173,7 +182,11 @@ def _openai_http_client_kwargs(
         client = build_keepalive_http_client(
             str(base_url or ""),
             async_mode=async_mode,
-            verify=_resolve_aux_verify(base_url),
+            verify=_resolve_aux_verify(
+                base_url,
+                provider_identity=provider_identity,
+                provider_config_base_url=provider_config_base_url,
+            ),
         )
     except (ImportError, AttributeError):
         # Version-skewed installs (#64333): a process whose sys.path resolves
@@ -200,8 +213,54 @@ def _openai_http_client_kwargs(
         return {}
     return {"http_client": client}
 
-def _create_openai_client(*, api_key: str, base_url: str, **kwargs: Any) -> Any:
-    kwargs = {**_openai_http_client_kwargs(base_url), **kwargs}
+def _apply_aux_custom_provider_headers(
+    client_kwargs: Dict[str, Any],
+    base_url: str,
+    provider_identity: Optional[str],
+) -> None:
+    """Apply headers for one named custom route without URL ambiguity."""
+    if not provider_identity:
+        return
+    try:
+        from hermes_cli.config import (
+            apply_custom_provider_extra_headers_to_client_kwargs,
+            load_config_readonly,
+        )
+
+        apply_custom_provider_extra_headers_to_client_kwargs(
+            client_kwargs,
+            base_url,
+            config=load_config_readonly(),
+            provider_identity=provider_identity,
+        )
+    except Exception:
+        logger.debug(
+            "custom-provider auxiliary headers skipped", exc_info=True
+        )
+
+
+def _create_openai_client(
+    *,
+    api_key: str,
+    base_url: str,
+    provider_identity: Optional[str] = None,
+    provider_config_base_url: Optional[str] = None,
+    **kwargs: Any,
+) -> Any:
+    config_base_url = provider_config_base_url or base_url
+    kwargs = {
+        **_openai_http_client_kwargs(
+            base_url,
+            provider_identity=provider_identity,
+            provider_config_base_url=config_base_url,
+        ),
+        **kwargs,
+    }
+    _apply_aux_custom_provider_headers(
+        kwargs,
+        config_base_url,
+        provider_identity,
+    )
     # Hermes owns auxiliary retry + provider/model fallback policy (the
     # same-provider transient retry in call_llm plus the except-chain
     # fallback). The OpenAI SDK's own default (max_retries=2 → up to 3
@@ -211,7 +270,16 @@ def _create_openai_client(*, api_key: str, base_url: str, **kwargs: Any) -> Any:
     # by default and let Hermes control the budget; explicit callers can still
     # override via kwargs.
     kwargs.setdefault("max_retries", 0)
-    return OpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    client = OpenAI(api_key=api_key, base_url=base_url, **kwargs)
+    if provider_identity:
+        # Async conversion rebuilds the SDK client; retain only non-secret
+        # routing metadata so it can reapply the same TLS/header policy.
+        try:
+            client._hermes_provider_identity = provider_identity
+            client._hermes_provider_config_base_url = config_base_url
+        except Exception:
+            pass
+    return client
 
 
 # ── Interrupt protection for atomic auxiliary tasks ──────────────────────
@@ -2590,6 +2658,32 @@ def clear_runtime_main() -> None:
         _RUNTIME_MAIN_COMPAT_SNAPSHOT = ("", "", "", "", "", "")
 
 
+def _active_custom_provider_identity(
+    runtime: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the named custom identity owned by the active main runtime."""
+    runtime = _normalize_main_runtime(runtime)
+    candidates = (
+        runtime.get("requested_provider"),
+        runtime.get("provider"),
+        _read_main_provider(),
+    )
+    for raw_candidate in candidates:
+        candidate = str(raw_candidate or "").strip().lower()
+        if candidate in {"", "auto", "custom", "main"}:
+            continue
+        if candidate.startswith("custom:"):
+            return candidate
+        try:
+            from hermes_cli.runtime_provider import _get_named_custom_provider
+
+            if _get_named_custom_provider(candidate) is not None:
+                return candidate
+        except Exception:
+            continue
+    return ""
+
+
 def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Resolve the active custom/main endpoint the same way the main CLI does.
 
@@ -2597,10 +2691,29 @@ def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[st
     endpoints where the base URL lives in config.yaml instead of the live
     environment.
     """
+    runtime_hint = _normalize_main_runtime(None)
+    provider_identity = _active_custom_provider_identity(runtime_hint)
+    runtime_provider = str(runtime_hint.get("provider") or "").strip().lower()
+    runtime_base = str(runtime_hint.get("base_url") or "").strip()
+
+    # A live custom runtime is authoritative: it may hold a rotated credential
+    # that differs from config.yaml, and its requested identity disambiguates
+    # sibling providers sharing the same endpoint.
+    if runtime_base and (
+        runtime_provider == "custom"
+        or runtime_provider.startswith("custom:")
+        or provider_identity
+    ):
+        runtime = runtime_hint
+    else:
+        runtime = None
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
-        runtime = resolve_runtime_provider(requested="custom")
+        if runtime is None:
+            runtime = resolve_runtime_provider(
+                requested=provider_identity or "custom"
+            )
     except Exception as exc:
         logger.debug("Auxiliary client: custom runtime resolution failed: %s", exc)
         runtime = None
@@ -2704,6 +2817,7 @@ def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
     if custom_base.lower().startswith(_CODEX_AUX_BASE_URL.lower()):
         return None, None
     model = _read_main_model_for_aux() or "gpt-4o-mini"
+    provider_identity = _active_custom_provider_identity()
     logger.debug("Auxiliary client: custom endpoint (%s, api_mode=%s)", model, custom_mode or "chat_completions")
     _clean_base, _dq = _extract_url_query_params(custom_base)
     _extra = {"default_query": _dq} if _dq else {}
@@ -2715,7 +2829,13 @@ def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
     if _custom_headers:
         _extra["default_headers"] = _custom_headers
     if custom_mode == "codex_responses":
-        real_client = _create_openai_client(api_key=custom_key, base_url=_clean_base, **_extra)
+        real_client = _create_openai_client(
+            api_key=custom_key,
+            base_url=_clean_base,
+            provider_identity=provider_identity or None,
+            provider_config_base_url=custom_base,
+            **_extra,
+        )
         return CodexAuxiliaryClient(real_client, model), model
     if custom_mode == "anthropic_messages":
         # Third-party Anthropic-compatible gateway (MiniMax, Zhipu GLM,
@@ -2729,14 +2849,26 @@ def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
                 "Custom endpoint declares api_mode=anthropic_messages but the "
                 "anthropic SDK is not installed — falling back to OpenAI-wire."
             )
-            return _create_openai_client(api_key=custom_key, base_url=_clean_base, **_extra), model
+            return _create_openai_client(
+                api_key=custom_key,
+                base_url=_clean_base,
+                provider_identity=provider_identity or None,
+                provider_config_base_url=custom_base,
+                **_extra,
+            ), model
         return (
             AnthropicAuxiliaryClient(real_client, model, custom_key, custom_base, is_oauth=False),
             model,
         )
     # URL-based anthropic detection for custom endpoints that didn't set
     # api_mode explicitly (e.g. kimi.com/coding reached via custom config).
-    _fallback_client = _create_openai_client(api_key=custom_key, base_url=_clean_base, **_extra)
+    _fallback_client = _create_openai_client(
+        api_key=custom_key,
+        base_url=_clean_base,
+        provider_identity=provider_identity or None,
+        provider_config_base_url=custom_base,
+        **_extra,
+    )
     _fallback_client = _maybe_wrap_anthropic(
         _fallback_client, model, custom_key, custom_base, custom_mode,
     )
@@ -4285,6 +4417,7 @@ def _candidate_context_window(
     model: str,
     base_url: str = "",
     api_key: str = "",
+    requested_provider: Optional[str] = None,
 ) -> Optional[int]:
     """Resolve the effective context window for a fallback candidate.
 
@@ -4300,12 +4433,34 @@ def _candidate_context_window(
     """
     if not model:
         return None
+    # Fallback entries retain the user's raw provider label.  Normalize named
+    # custom routes to the billing class plus an explicit identity before
+    # looking up context metadata; URL-only matching is ambiguous when two
+    # entries share a relay endpoint.
+    route_provider = str(provider or "").strip()
+    route_identity = str(requested_provider or "").strip() or None
+    route_norm = route_provider.casefold()
+    if route_norm.startswith("custom:"):
+        route_provider = "custom"
+        route_identity = route_identity or str(provider).strip()
+    elif route_norm not in {"", "custom", "auto"}:
+        try:
+            from hermes_cli.runtime_provider import has_named_custom_provider
+
+            if has_named_custom_provider(route_provider):
+                route_provider = "custom"
+                route_identity = route_identity or str(provider).strip()
+        except Exception:
+            pass
+    elif route_norm == "custom":
+        route_provider = "custom"
     try:
         ctx = get_model_context_length(
             model,
             base_url=base_url,
             api_key=api_key,
-            provider=provider,
+            provider=route_provider,
+            requested_provider=route_identity,
         )
     except Exception as exc:
         logger.debug(
@@ -4365,11 +4520,17 @@ def _try_configured_fallback_chain(
 
         if fb_client is not None:
             if min_ctx is not None and resolved_model:
+                (
+                    context_base_url,
+                    context_api_key,
+                    context_provider_identity,
+                ) = _fallback_context_runtime(entry, fb_client, fb_provider)
                 fb_ctx = _candidate_context_window(
                     fb_provider,
                     resolved_model,
-                    base_url=str(entry.get("base_url") or ""),
-                    api_key=_fallback_entry_api_key(entry) or "",
+                    base_url=context_base_url,
+                    api_key=context_api_key,
+                    requested_provider=context_provider_identity,
                 )
                 if fb_ctx is not None and fb_ctx < min_ctx:
                     logger.info(
@@ -4424,6 +4585,31 @@ def _fallback_entry_api_key(entry: Dict[str, Any]) -> Optional[str]:
     if key_env:
         return os.getenv(key_env, "").strip() or None
     return None
+
+
+def _fallback_context_runtime(
+    entry: Dict[str, Any],
+    client: Any,
+    provider: str,
+) -> Tuple[str, str, str]:
+    """Return the exact resolved route used to screen a fallback's context.
+
+    Named fallback entries commonly contain only ``provider`` and ``model``;
+    their URL and credential are attached while building the client. Reading
+    only the raw config row loses those values and collapses same-endpoint
+    custom providers back into one context-cache namespace.
+    """
+    base_url = str(
+        entry.get("base_url") or getattr(client, "base_url", "") or ""
+    )
+    api_key = _fallback_entry_api_key(entry)
+    if not api_key:
+        client_api_key = getattr(client, "api_key", "")
+        api_key = client_api_key if isinstance(client_api_key, str) else ""
+    provider_identity = str(
+        getattr(client, "_hermes_provider_identity", "") or provider or ""
+    ).strip()
+    return base_url, api_key or "", provider_identity
 
 
 def _resolve_fallback_entry(entry: Dict[str, Any]) -> Tuple[Optional[Any], Optional[str]]:
@@ -4498,11 +4684,17 @@ def _try_main_fallback_chain(
             fb_client, resolved_model = None, None
         if fb_client is not None:
             if min_ctx is not None:
+                (
+                    context_base_url,
+                    context_api_key,
+                    context_provider_identity,
+                ) = _fallback_context_runtime(entry, fb_client, fb_provider)
                 fb_ctx = _candidate_context_window(
                     fb_provider,
                     resolved_model or fb_model,
-                    base_url=str(entry.get("base_url") or ""),
-                    api_key=_fallback_entry_api_key(entry) or "",
+                    base_url=context_base_url,
+                    api_key=context_api_key,
+                    requested_provider=context_provider_identity,
                 )
                 if fb_ctx is not None and fb_ctx < min_ctx:
                     logger.info(
@@ -4683,6 +4875,7 @@ def _resolve_auto(
                 explicit_base_url=explicit_base_url,
                 explicit_api_key=explicit_api_key,
                 api_mode=runtime_api_mode or None,
+                main_runtime=runtime,
             )
             if client is not None:
                 logger.info("Auxiliary auto-detect: using main provider %s (%s)",
@@ -4738,7 +4931,12 @@ def _resolve_auto(
 # below — never look up auth env vars ad-hoc.
 
 
-def _to_async_client(sync_client, model: str, is_vision: bool = False):
+def _to_async_client(
+    sync_client,
+    model: str,
+    is_vision: bool = False,
+    provider_identity: Optional[str] = None,
+):
     """Convert a sync client to its async counterpart, preserving Codex routing.
 
     When ``is_vision=True`` and the underlying base URL is Copilot, the
@@ -4773,6 +4971,14 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
         "base_url": str(sync_client.base_url),
     }
     sync_base_url = str(sync_client.base_url)
+    provider_identity = provider_identity or getattr(
+        sync_client, "_hermes_provider_identity", None
+    )
+    provider_config_base_url = getattr(
+        sync_client,
+        "_hermes_provider_config_base_url",
+        None,
+    ) or sync_base_url
     if base_url_host_matches(sync_base_url, "openrouter.ai"):
         async_kwargs["default_headers"] = build_or_headers()
     elif base_url_host_matches(sync_base_url, "githubcopilot.com"):
@@ -4802,8 +5008,18 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
     _merged_async = _apply_user_default_headers(async_kwargs.get("default_headers"))
     if _merged_async:
         async_kwargs["default_headers"] = _merged_async
+    _apply_aux_custom_provider_headers(
+        async_kwargs,
+        provider_config_base_url,
+        provider_identity,
+    )
     async_kwargs = {
-        **_openai_http_client_kwargs(sync_base_url, async_mode=True),
+        **_openai_http_client_kwargs(
+            sync_base_url,
+            async_mode=True,
+            provider_identity=provider_identity,
+            provider_config_base_url=provider_config_base_url,
+        ),
         **async_kwargs,
     }
     # See _create_openai_client: disable SDK-internal retries so Hermes owns
@@ -5094,6 +5310,13 @@ def resolve_provider_client(
     if provider == "custom":
         custom_base = ""
         custom_key = ""
+        custom_provider_identity = None
+        if isinstance(main_runtime, dict):
+            runtime_identity = str(
+                main_runtime.get("requested_provider") or ""
+            ).strip()
+            if runtime_identity.casefold() not in {"", "custom", "auto"}:
+                custom_provider_identity = runtime_identity
         if explicit_base_url:
             custom_base = _to_openai_base_url(explicit_base_url).strip()
             custom_key = (
@@ -5151,7 +5374,13 @@ def resolve_provider_client(
             _merged_custom = _apply_user_default_headers(extra.get("default_headers"))
             if _merged_custom:
                 extra["default_headers"] = _merged_custom
-            client = _create_openai_client(api_key=custom_key, base_url=_clean_base, **extra)
+            client = _create_openai_client(
+                api_key=custom_key,
+                base_url=_clean_base,
+                provider_identity=custom_provider_identity,
+                provider_config_base_url=custom_base,
+                **extra,
+            )
             client = _wrap_if_needed(client, final_model, custom_base, custom_key)
             return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                     else (client, final_model))
@@ -5190,6 +5419,7 @@ def resolve_provider_client(
         if custom_entry is None:
             custom_entry = _get_named_custom_provider(provider)
         if custom_entry:
+            custom_provider_identity = original_provider or provider
             custom_base = (custom_entry.get("base_url") or "").strip()
             custom_key = (custom_entry.get("api_key") or "").strip()
             custom_key_env = (custom_entry.get("key_env") or custom_entry.get("api_key_env") or "").strip()
@@ -5255,7 +5485,13 @@ def resolve_provider_client(
                         _fb_headers = _apply_user_default_headers(_fb_extra.get("default_headers"))
                         if _fb_headers:
                             _fb_extra["default_headers"] = _fb_headers
-                        client = _create_openai_client(api_key=custom_key, base_url=_fb_clean, **_fb_extra)
+                        client = _create_openai_client(
+                            api_key=custom_key,
+                            base_url=_fb_clean,
+                            provider_identity=custom_provider_identity,
+                            provider_config_base_url=custom_base,
+                            **_fb_extra,
+                        )
                         return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                                 else (client, final_model))
                     sync_anthropic = AnthropicAuxiliaryClient(
@@ -5264,7 +5500,13 @@ def resolve_provider_client(
                     if async_mode:
                         return AsyncAnthropicAuxiliaryClient(sync_anthropic), final_model
                     return sync_anthropic, final_model
-                client = _create_openai_client(api_key=custom_key, base_url=_clean_base2, **_extra2)
+                client = _create_openai_client(
+                    api_key=custom_key,
+                    base_url=_clean_base2,
+                    provider_identity=custom_provider_identity,
+                    provider_config_base_url=custom_base,
+                    **_extra2,
+                )
                 # codex_responses or inherited auto-detect (via _wrap_if_needed).
                 # _wrap_if_needed reads the closed-over `api_mode` (the task-level
                 # override). Named-provider entry api_mode=codex_responses also
@@ -6087,10 +6329,18 @@ def _client_cache_key(
     model: Optional[str] = None,
 ) -> tuple:
     runtime = _normalize_main_runtime(main_runtime)
-    runtime_key = tuple(
-        _runtime_cache_discriminator(field, runtime.get(field, ""))
-        for field in _MAIN_RUNTIME_FIELDS
-    ) if provider == "auto" else ()
+    raw_provider = str(provider or "").strip().lower()
+    runtime_scoped = raw_provider in {"auto", "custom", "main"} or raw_provider.startswith(
+        "custom:"
+    )
+    runtime_key = (
+        tuple(
+            _runtime_cache_discriminator(field, runtime.get(field, ""))
+            for field in _MAIN_RUNTIME_CONTEXT_FIELDS
+        )
+        if runtime_scoped
+        else ()
+    )
     # `auto` can now resolve through task-specific or main fallback policy,
     # so the task participates in the cache key. Non-auto providers keep the
     # old cache shape because the explicit provider/model tuple is sufficient.

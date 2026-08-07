@@ -2311,6 +2311,7 @@ def _resolve_runtime_agent_kwargs() -> dict:
         "command": runtime.get("command"),
         "args": list(runtime.get("args") or []),
         "credential_pool": runtime.get("credential_pool"),
+        "request_overrides": runtime.get("request_overrides"),
         "max_tokens": max_tokens,
     }
 
@@ -2334,6 +2335,7 @@ def _resolve_runtime_agent_kwargs_for_provider(provider: str) -> dict:
         "command": runtime.get("command"),
         "args": list(runtime.get("args") or []),
         "credential_pool": runtime.get("credential_pool"),
+        "request_overrides": runtime.get("request_overrides"),
     }
 
 
@@ -4397,18 +4399,24 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         override = self._session_model_overrides.get(resolved_session_key) if resolved_session_key else None
         if override:
             override_model = override.get("model", model)
+            override_requested_provider = (
+                override.get("requested_provider")
+                or override.get("provider")
+            )
             override_runtime = {
                 "provider": override.get("provider"),
+                "requested_provider": override_requested_provider,
                 "api_key": override.get("api_key"),
                 "base_url": override.get("base_url"),
                 "api_mode": override.get("api_mode"),
                 "max_tokens": override.get("max_tokens"),
                 "credential_pool": override.get("credential_pool"),
+                "request_overrides": override.get("request_overrides"),
             }
             if override_runtime.get("api_key"):
                 if override_runtime.get("credential_pool") is None:
                     override_runtime["credential_pool"] = _credential_pool_for_provider(
-                        override.get("provider")
+                        override_requested_provider
                     )
                 logger.debug(
                     "Session model override (fast): session=%s config_model=%s -> override_model=%s provider=%s",
@@ -4554,16 +4562,31 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             ),
         }
 
+        request_overrides = dict(
+            runtime_kwargs.get("request_overrides") or {}
+        )
         service_tier = getattr(self, "_service_tier", None)
         if not service_tier:
-            route["request_overrides"] = {}
+            route["request_overrides"] = request_overrides
             return route
 
         try:
             overrides = resolve_fast_mode_overrides(route["model"])
         except Exception:
             overrides = None
-        route["request_overrides"] = overrides or {}
+        for key, value in (overrides or {}).items():
+            if (
+                key == "extra_body"
+                and isinstance(value, dict)
+                and isinstance(request_overrides.get(key), dict)
+            ):
+                request_overrides[key] = {
+                    **request_overrides[key],
+                    **value,
+                }
+            else:
+                request_overrides[key] = value
+        route["request_overrides"] = request_overrides
         return route
 
     def _sync_session_model_from_agent(self, session_id: str, agent: Any) -> None:
@@ -4585,6 +4608,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return
         runtime = {
             "provider": getattr(agent, "provider", None),
+            "requested_provider": getattr(agent, "requested_provider", None),
             "base_url": getattr(agent, "base_url", None),
             "api_mode": getattr(agent, "api_mode", None),
             "fallback_active": bool(getattr(agent, "_fallback_activated", False)),
@@ -12760,6 +12784,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             model=_msg_model,
                             base_url=_msg_base_url,
                             custom_providers=_msg_custom_providers,
+                            provider_identity=_msg_runtime.get("requested_provider"),
                         )
                         if _msg_custom_ctx:
                             _msg_config_ctx = _msg_custom_ctx
@@ -12772,6 +12797,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     config_context_length=_msg_config_ctx,
                     provider=_msg_runtime.get("provider") or "",
                     custom_providers=_msg_custom_providers,
+                    requested_provider=_msg_runtime.get("requested_provider"),
                 )
                 _ctx_result = await preprocess_context_references_async(
                     message_text,
@@ -13239,6 +13265,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _hyg_provider = None
             _hyg_base_url = None
             _hyg_api_key = None
+            _hyg_requested_provider = None
+            _hyg_custom_providers = []
             _hyg_configured_model = None
             _hyg_configured_provider = None
             _hyg_configured_base_url = None
@@ -13323,6 +13351,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _hyg_provider = _hyg_runtime.get("provider") or _hyg_provider
                     _hyg_base_url = _hyg_runtime.get("base_url") or _hyg_base_url
                     _hyg_api_key = _hyg_runtime.get("api_key") or _hyg_api_key
+                    _hyg_requested_provider = _hyg_runtime.get(
+                        "requested_provider"
+                    )
                 except Exception:
                     pass
 
@@ -13361,6 +13392,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             model=_hyg_model,
                             base_url=_hyg_base_url,
                             custom_providers=_hyg_custom_providers,
+                            provider_identity=_hyg_requested_provider,
                         )
                         if _hyg_custom_ctx:
                             _hyg_config_context_length = int(_hyg_custom_ctx)
@@ -13376,6 +13408,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     api_key=_hyg_api_key or "",
                     config_context_length=_hyg_config_context_length,
                     provider=_hyg_provider or "",
+                    custom_providers=_hyg_custom_providers,
+                    requested_provider=_hyg_requested_provider,
                 )
                 _compress_token_threshold = int(
                     _hyg_context_length * _hyg_threshold_pct
@@ -14761,6 +14795,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         provider = None
         base_url = None
         api_key = None
+        requested_provider = None
         custom_provs = None
         data = None
         configured_model = None
@@ -14797,6 +14832,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             provider = runtime.get("provider") or provider
             base_url = runtime.get("base_url") or base_url
             api_key = runtime.get("api_key")
+            requested_provider = runtime.get("requested_provider")
         except Exception:
             pass
 
@@ -14824,6 +14860,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     model=model,
                     base_url=base_url,
                     custom_providers=custom_provs,
+                    provider_identity=requested_provider,
                 )
                 if custom_ctx:
                     config_context_length = custom_ctx
@@ -14837,6 +14874,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             config_context_length=config_context_length,
             provider=provider or "",
             custom_providers=custom_provs,
+            requested_provider=requested_provider,
         )
 
         # Format context source hint
@@ -18755,34 +18793,49 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return
         if not persisted:
             return
+        persisted_provider = persisted.get("provider")
+        requested_provider = (
+            persisted.get("requested_provider") or persisted_provider
+        )
         override: Dict[str, Any] = {
             "model": persisted.get("model"),
-            "provider": persisted.get("provider"),
+            "provider": persisted_provider,
+            "requested_provider": requested_provider,
             "base_url": persisted.get("base_url"),
         }
-        provider = persisted.get("provider")
-        if provider:
+        if requested_provider:
             # Re-resolve credentials for the persisted provider. On failure
             # (e.g. credentials were removed since the switch) keep the
             # credential-less override — _resolve_session_agent_runtime falls
             # back to env-based resolution and applies model/provider on top.
             try:
-                runtime = _resolve_runtime_agent_kwargs_for_provider(provider)
+                runtime = _resolve_runtime_agent_kwargs_for_provider(
+                    requested_provider
+                )
+                override["provider"] = (
+                    runtime.get("provider") or persisted_provider
+                )
+                override["requested_provider"] = (
+                    runtime.get("requested_provider") or requested_provider
+                )
                 override["api_key"] = runtime.get("api_key")
                 override["api_mode"] = runtime.get("api_mode")
                 override["credential_pool"] = runtime.get("credential_pool")
+                override["request_overrides"] = runtime.get(
+                    "request_overrides"
+                )
                 if not override.get("base_url"):
                     override["base_url"] = runtime.get("base_url")
             except Exception:
                 logger.debug(
                     "Credential re-resolution failed for persisted override "
                     "(provider=%s); using credential-less override",
-                    provider, exc_info=True,
+                    requested_provider, exc_info=True,
                 )
         self._session_model_overrides[session_key] = override
         logger.info(
             "Rehydrated persisted /model override for session=%s: model=%s provider=%s",
-            session_key, override.get("model"), provider or "",
+            session_key, override.get("model"), requested_provider or "",
         )
 
     def _apply_session_model_override(
@@ -18800,17 +18853,25 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if not override:
             return model, runtime_kwargs
         model = override.get("model", model)
-        for key in ("provider", "api_key", "base_url", "api_mode", "credential_pool"):
+        for key in (
+            "provider",
+            "requested_provider",
+            "api_key",
+            "base_url",
+            "api_mode",
+            "credential_pool",
+            "request_overrides",
+        ):
             val = override.get(key)
             if val is not None:
                 runtime_kwargs[key] = val
         if (
             runtime_kwargs.get("api_key")
             and runtime_kwargs.get("credential_pool") is None
-            and override.get("provider")
+            and (override.get("requested_provider") or override.get("provider"))
         ):
             runtime_kwargs["credential_pool"] = _credential_pool_for_provider(
-                override.get("provider")
+                override.get("requested_provider") or override.get("provider")
             )
         return model, runtime_kwargs
 
@@ -21799,7 +21860,26 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             agent.event_callback = _event_callback_sync
             agent.reasoning_config = reasoning_config
             agent.service_tier = self._service_tier
-            agent.request_overrides = turn_route.get("request_overrides") or {}
+            agent.request_overrides = dict(
+                turn_route.get("request_overrides") or {}
+            )
+            # AIAgent init merges provider-scoped ``extra_body`` into the
+            # constructor overrides. Re-apply it after the gateway's
+            # per-message fast-mode assignment so the selected custom route
+            # keeps its own request fields instead of silently losing them on
+            # the first call (or inheriting a cached sibling's fields).
+            try:
+                from agent.agent_init import _merge_custom_provider_extra_body
+
+                _merge_custom_provider_extra_body(
+                    agent,
+                    getattr(agent, "_custom_providers", None) or [],
+                )
+            except Exception:
+                logger.debug(
+                    "custom-provider request override refresh failed",
+                    exc_info=True,
+                )
             # Must-deliver notes for THIS turn ride the current user message
             # (api_content sidecar), never the system prompt: staged by
             # _handle_message_with_agent (auto-reset note, first-contact

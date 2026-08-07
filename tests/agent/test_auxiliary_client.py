@@ -6307,6 +6307,89 @@ class TestCompressionFallbackContextFilter:
         assert client is large_client
         assert model == "large-512k"
 
+    def test_configured_named_routes_screen_with_resolved_runtime(
+        self, tmp_path, monkeypatch
+    ):
+        """Same-URL named fallbacks use the client route, not an empty row."""
+        home = tmp_path / "hermes"
+        home.mkdir()
+        monkeypatch.setenv("HERMES_HOME", str(home))
+        (home / "config.yaml").write_text(
+            """
+providers:
+  relay-a:
+    name: Relay A
+    base_url: https://relay.example.test/v1
+    api_key: key-a
+  relay-b:
+    name: Relay B
+    base_url: https://relay.example.test/v1
+    api_key: key-b
+""".strip(),
+            encoding="utf-8",
+        )
+
+        from agent.auxiliary_client import _try_configured_fallback_chain
+
+        entries = [
+            {"provider": "relay-a", "model": "shared-model"},
+            {"provider": "relay-b", "model": "shared-model"},
+        ]
+        client_a = MagicMock(name="relay_a_client")
+        client_a.base_url = "https://relay.example.test/v1"
+        client_a.api_key = "key-a"
+        client_a._hermes_provider_identity = "relay-a"
+        client_b = MagicMock(name="relay_b_client")
+        client_b.base_url = "https://relay.example.test/v1"
+        client_b.api_key = "key-b"
+        client_b._hermes_provider_identity = "relay-b"
+        context_calls = []
+
+        def fake_resolve(entry):
+            return (
+                (client_a, "shared-model")
+                if entry is entries[0]
+                else (client_b, "shared-model")
+            )
+
+        def fake_context(model, **kwargs):
+            context_calls.append((model, kwargs))
+            return 32_000 if kwargs["api_key"] == "key-a" else 256_000
+
+        monkeypatch.setattr(
+            "agent.auxiliary_client._get_auxiliary_task_config",
+            lambda task: {"fallback_chain": entries}
+            if task == "compression"
+            else {},
+        )
+
+        with patch(
+            "agent.auxiliary_client._resolve_fallback_entry",
+            side_effect=fake_resolve,
+        ), patch(
+            "agent.auxiliary_client.get_model_context_length",
+            side_effect=fake_context,
+        ):
+            client, model, label = _try_configured_fallback_chain(
+                task="compression", failed_provider="auto"
+            )
+
+        assert client is client_b
+        assert model == "shared-model"
+        assert "relay-b" in label
+        assert [
+            (
+                kwargs["provider"],
+                kwargs["requested_provider"],
+                kwargs["base_url"],
+                kwargs["api_key"],
+            )
+            for _model, kwargs in context_calls
+        ] == [
+            ("custom", "relay-a", "https://relay.example.test/v1", "key-a"),
+            ("custom", "relay-b", "https://relay.example.test/v1", "key-b"),
+        ]
+
     # ── L3: main fallback chain ────────────────────────────────────────
 
     def test_main_chain_skips_too_small_candidate_for_compression(self, monkeypatch):

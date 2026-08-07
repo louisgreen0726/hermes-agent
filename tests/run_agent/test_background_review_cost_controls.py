@@ -28,6 +28,7 @@ def _msg(role, content, tool_calls=None):
 class _FakeAgent:
     def __init__(self, provider="openai-codex", model="gpt-5.5"):
         self.provider = provider
+        self.requested_provider = provider
         self.model = model
         self._credential_pool: Any = None
         self.request_overrides = {}
@@ -59,6 +60,7 @@ def test_routing_to_different_model_marks_routed_and_resolves_credentials():
     }}}
     fake_rp = {
         "provider": "openrouter", "api_key": "or-key",
+        "requested_provider": "openrouter",
         "base_url": "https://openrouter.ai/api/v1", "api_mode": "chat_completions",
         "credential_pool": "routed-pool",
         "request_overrides": {"extra_body": {"store": False}},
@@ -69,6 +71,7 @@ def test_routing_to_different_model_marks_routed_and_resolves_credentials():
         rt = br._resolve_review_runtime(agent)
     assert rt["routed"] is True
     assert rt["provider"] == "openrouter"
+    assert rt["requested_provider"] == "openrouter"
     assert rt["model"] == "google/gemini-3-flash-preview"
     assert rt["api_key"] == "or-key"
     assert rt["credential_pool"] == "routed-pool"
@@ -78,12 +81,15 @@ def test_routing_to_different_model_marks_routed_and_resolves_credentials():
 
 def test_unrouted_runtime_keeps_parent_pool_and_overrides():
     agent = _FakeAgent()
+    agent.provider = "custom"
+    agent.requested_provider = "custom:relay-b"
     agent._credential_pool = "parent-pool"
     agent.request_overrides = {"service_tier": "priority"}
     agent.max_tokens = 4096
     with patch("hermes_cli.config.load_config", return_value={}):
         rt = br._resolve_review_runtime(agent)
     assert rt["credential_pool"] == "parent-pool"
+    assert rt["requested_provider"] == "custom:relay-b"
     assert rt["request_overrides"] == {"service_tier": "priority"}
     assert rt["max_tokens"] == 4096
 
@@ -96,6 +102,22 @@ def test_routing_same_model_as_parent_is_not_routed():
     with patch("hermes_cli.config.load_config", return_value=cfg):
         rt = br._resolve_review_runtime(agent)
     assert rt["routed"] is False  # same model/provider → keep full-replay path
+
+
+def test_named_custom_same_model_route_is_not_routed():
+    agent = _FakeAgent(provider="custom", model="shared-model")
+    agent.requested_provider = "custom:relay-b"
+    cfg = {"auxiliary": {"background_review": {
+        "provider": "custom:relay-b", "model": "shared-model",
+    }}}
+
+    with patch("hermes_cli.config.load_config", return_value=cfg), \
+         patch("hermes_cli.runtime_provider.resolve_runtime_provider") as resolve:
+        rt = br._resolve_review_runtime(agent)
+
+    assert rt["routed"] is False
+    assert rt["requested_provider"] == "custom:relay-b"
+    resolve.assert_not_called()
 
 
 def test_routing_resolution_failure_falls_back_to_parent():

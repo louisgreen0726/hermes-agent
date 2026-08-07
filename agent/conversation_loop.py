@@ -37,7 +37,10 @@ from agent.conversation_compression import (
     compression_skipped_due_to_lock,
     conversation_history_after_compression,
 )
-from agent.context_engine import automatic_compaction_status_message
+from agent.context_engine import (
+    automatic_compaction_status_message,
+    update_context_engine_model,
+)
 from agent.display import KawaiiSpinner
 from agent.error_classifier import FailoverReason, classify_api_error
 from agent.iteration_budget import IterationBudget
@@ -66,6 +69,7 @@ from agent.model_metadata import (
     _estimate_tools_tokens_rough,
     estimate_messages_tokens_rough,
     estimate_request_tokens_rough,
+    get_context_cache_scope,
     get_context_length_from_provider_error,
     is_output_cap_error,
     parse_available_output_tokens_from_error,
@@ -2908,7 +2912,18 @@ def run_conversation(
                     if getattr(agent.context_compressor, "_context_probed", False):
                         ctx = agent.context_compressor.context_length
                         if getattr(agent.context_compressor, "_context_probe_persistable", False):
-                            save_context_length(agent.model, agent.base_url, ctx)
+                            save_context_length(
+                                agent.model,
+                                agent.base_url,
+                                ctx,
+                                cache_scope=get_context_cache_scope(
+                                    provider=getattr(agent, "provider", ""),
+                                    requested_provider=getattr(
+                                        agent, "requested_provider", None
+                                    ),
+                                    api_key=getattr(agent, "api_key", ""),
+                                ),
+                            )
                             agent._safe_print(f"{agent.log_prefix}💾 Cached context length: {ctx:,} tokens for {agent.model}")
                         agent.context_compressor._context_probed = False
                         agent.context_compressor._context_probe_persistable = False
@@ -3928,13 +3943,15 @@ def run_conversation(
                     compressor = agent.context_compressor
                     old_ctx = compressor.context_length
                     if old_ctx > _reduced_ctx:
-                        compressor.update_model(
+                        update_context_engine_model(
+                            compressor,
                             model=agent.model,
                             context_length=_reduced_ctx,
                             base_url=agent.base_url,
                             api_key=getattr(agent, "api_key", ""),
                             provider=agent.provider,
                             api_mode=agent.api_mode,
+                            requested_provider=getattr(agent, "requested_provider", None),
                         )
                         # Context probing flags — only set on built-in
                         # compressor (plugin engines manage their own).
@@ -4416,13 +4433,15 @@ def run_conversation(
 
                     if new_ctx is not None:
                         agent._buffer_vprint(f"Context limit detected from API: {new_ctx:,} tokens (was {old_ctx:,})")
-                        compressor.update_model(
+                        update_context_engine_model(
+                            compressor,
                             model=agent.model,
                             context_length=new_ctx,
                             base_url=agent.base_url,
                             api_key=getattr(agent, "api_key", ""),
                             provider=agent.provider,
                             api_mode=agent.api_mode,
+                            requested_provider=getattr(agent, "requested_provider", None),
                         )
                         # Context probing flags — only set on built-in
                         # compressor (plugin engines manage their own).  This

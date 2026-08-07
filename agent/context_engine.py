@@ -26,6 +26,7 @@ Lifecycle:
 """
 
 from abc import ABC, abstractmethod
+import inspect
 from typing import Any, Dict, List, Optional
 
 from agent.redact import redact_sensitive_text
@@ -463,6 +464,7 @@ class ContextEngine(ABC):
         api_key: str = "",
         provider: str = "",
         api_mode: str = "",
+        requested_provider: str = "",
     ) -> None:
         """Called when the user switches models or on fallback activation.
 
@@ -471,6 +473,7 @@ class ContextEngine(ABC):
         (e.g. recalculate DAG budgets, switch summary models).
         """
         self.context_length = context_length
+        self.requested_provider = requested_provider or ""
         # Apply per-model threshold overrides if set (longest substring match).
         # Falls back to _config_threshold_percent (the raw config value) when
         # no override matches. Plugin engines that override update_model() can
@@ -487,3 +490,39 @@ class ContextEngine(ABC):
         )
         self.threshold_percent = self._base_threshold_percent
         self.threshold_tokens = int(context_length * self.threshold_percent)
+
+
+def update_context_engine_model(
+    engine: Any,
+    *,
+    requested_provider: Optional[str] = None,
+    **kwargs: Any,
+) -> None:
+    """Update a context engine while remaining compatible with old plugins.
+
+    The built-in compressor understands ``requested_provider`` so context
+    metadata can stay scoped to a named custom route.  Third-party engines
+    released before that field existed commonly override ``update_model``
+    with the old fixed signature.  Inspect the bound method before passing the
+    new keyword instead of catching a broad ``TypeError`` that could hide a
+    real plugin failure.
+    """
+    updater = getattr(engine, "update_model")
+    if requested_provider is None:
+        updater(**kwargs)
+        return
+    try:
+        parameters = inspect.signature(updater).parameters.values()
+        accepts_identity = any(
+            parameter.name == "requested_provider"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        # Some extension objects expose opaque callables.  Preserve the old
+        # call contract when we cannot prove the keyword is accepted.
+        accepts_identity = False
+    if accepts_identity:
+        updater(requested_provider=requested_provider, **kwargs)
+    else:
+        updater(**kwargs)

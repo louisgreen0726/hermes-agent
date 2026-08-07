@@ -314,10 +314,91 @@ class TestFallbackChainDedup:
                 ok = agent._try_activate_fallback()
 
         assert ok is True
-        # Same shim/base_url+model entry skipped, second one used.
-        assert called == [("openrouter", "anthropic/claude-opus-4.7")], (
+        # Credential-aware dedup resolves the first candidate locally before
+        # proving it is the same backend, then advances to the real fallback.
+        assert called == [
+            ("claude-cli-alt", "claude-opus-4.7"),
+            ("openrouter", "anthropic/claude-opus-4.7"),
+        ], (
             f"expected base_url-aware dedup, got call order: {called}"
         )
+        assert agent.provider == "openrouter"
+
+    def test_allows_named_custom_sibling_with_different_api_key(self):
+        """Same relay+model is a valid fallback when the named routes use
+        different credentials and therefore have independent quota/catalog
+        surfaces."""
+        shared_url = "https://shared-relay.example/v1"
+        agent = _make_agent(
+            fallback_model={
+                "provider": "custom:relay-b",
+                "model": "shared-model",
+                "base_url": shared_url,
+            }
+        )
+        agent.provider = "custom"
+        agent.requested_provider = "custom:relay-a"
+        agent.model = "shared-model"
+        agent.base_url = shared_url
+        agent.api_key = "key-a"
+        agent.context_compressor = None
+        agent._custom_providers = [
+            {
+                "name": "Relay A",
+                "base_url": shared_url,
+                "api_key": "key-a",
+                "model": "shared-model",
+                "extra_body": {"tenant": "relay-a"},
+            },
+            {
+                "name": "Relay B",
+                "base_url": shared_url,
+                "api_key": "key-b",
+                "model": "shared-model",
+                "extra_body": {"tenant": "relay-b"},
+            },
+        ]
+        agent.request_overrides = {
+            "temperature": 0.2,
+            "extra_body": {"tenant": "relay-a", "caller": True},
+        }
+        agent._custom_provider_extra_body = {"tenant": "relay-a"}
+        agent._credential_pool = None
+
+        calls = []
+
+        def _resolve(provider, model=None, raw_codex=False, **kwargs):
+            calls.append((provider, model))
+            return _mock_client(base_url=shared_url, api_key="key-b"), model
+
+        with (
+            patch(
+                "agent.auxiliary_client.resolve_provider_client",
+                side_effect=_resolve,
+            ),
+            patch(
+                "hermes_cli.runtime_provider.has_named_custom_provider",
+                side_effect=lambda provider: provider
+                in {"custom:relay-a", "custom:relay-b"},
+            ),
+            patch(
+                "hermes_cli.model_normalize.normalize_model_for_provider",
+                side_effect=lambda model, _provider: model,
+            ),
+            patch("agent.credential_pool.load_pool", return_value=None),
+        ):
+            ok = agent._try_activate_fallback()
+
+        assert ok is True
+        assert calls == [("custom:relay-b", "shared-model")]
+        assert agent.provider == "custom"
+        assert agent.requested_provider == "custom:relay-b"
+        assert agent.api_key == "key-b"
+        assert agent.request_overrides == {
+            "temperature": 0.2,
+            "extra_body": {"tenant": "relay-b", "caller": True},
+        }
+        assert agent._custom_provider_extra_body == {"tenant": "relay-b"}
 
     def test_returns_false_when_only_self_matching_entries(self):
         """A chain with only self-matching entries exhausts to False."""

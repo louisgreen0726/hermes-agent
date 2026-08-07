@@ -36,6 +36,31 @@ class _CapturingAgent:
         }
 
 
+class _NamedCustomCapturingAgent(_CapturingAgent):
+    """Simulate AIAgent's provider-scoped extra_body initialization."""
+
+    last_request_overrides = None
+    custom_providers = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model = kwargs["model"]
+        self.provider = kwargs["provider"]
+        self.requested_provider = kwargs.get("requested_provider")
+        self.base_url = kwargs["base_url"]
+        self.request_overrides = dict(kwargs.get("request_overrides") or {})
+        self._custom_providers = list(type(self).custom_providers)
+        self._custom_provider_extra_body = {}
+
+        from agent.agent_init import _merge_custom_provider_extra_body
+
+        _merge_custom_provider_extra_body(self, self._custom_providers)
+
+    def run_conversation(self, *args, **kwargs):
+        type(self).last_request_overrides = dict(self.request_overrides)
+        return super().run_conversation(*args, **kwargs)
+
+
 def _make_runner():
     runner = object.__new__(gateway_run.GatewayRunner)
     runner.adapters = {}
@@ -124,6 +149,94 @@ def test_run_agent_prefers_session_override_over_global_runtime(monkeypatch):
     assert _CapturingAgent.last_init["base_url"] == "https://chatgpt.com/backend-api/codex"
     assert _CapturingAgent.last_init["api_key"] == "***"
     assert _CapturingAgent.last_init["reasoning_config"] == {"enabled": True, "effort": "high"}
+
+
+def test_run_agent_preserves_named_custom_extra_body_on_first_turn(monkeypatch):
+    """Per-turn gateway state must not erase the selected custom route body."""
+    shared_url = "https://relay.example/v1"
+    custom_providers = [
+        {
+            "name": "Relay A",
+            "base_url": shared_url,
+            "model": "shared-model",
+            "extra_body": {"tenant": "relay-a"},
+        },
+        {
+            "name": "Relay B",
+            "base_url": shared_url,
+            "model": "shared-model",
+            "extra_body": {"tenant": "relay-b"},
+        },
+    ]
+
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {})
+    monkeypatch.setattr(gateway_run, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_gateway_model",
+        lambda _config=None: "global-model",
+    )
+    monkeypatch.setattr(
+        gateway_run,
+        "_resolve_runtime_agent_kwargs",
+        _explode_runtime_resolution,
+    )
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = _NamedCustomCapturingAgent
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    import hermes_cli.tools_config as tools_config
+
+    monkeypatch.setattr(
+        tools_config,
+        "_get_platform_tools",
+        lambda _user_config, _platform_key: {"core"},
+    )
+
+    _NamedCustomCapturingAgent.custom_providers = custom_providers
+    _NamedCustomCapturingAgent.last_init = None
+    _NamedCustomCapturingAgent.last_request_overrides = None
+
+    runner = _make_runner()
+    source = SessionSource(
+        platform=Platform.LOCAL,
+        chat_id="cli",
+        chat_name="CLI",
+        chat_type="dm",
+        user_id="user-1",
+    )
+    session_key = "agent:main:local:dm"
+    runner._session_model_overrides[session_key] = {
+        "model": "shared-model",
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "api_key": "key-b",
+        "base_url": shared_url,
+        "api_mode": "chat_completions",
+    }
+
+    result = asyncio.run(
+        runner._run_agent(
+            message="ping",
+            context_prompt="",
+            history=[],
+            source=source,
+            session_id="session-custom",
+            session_key=session_key,
+        )
+    )
+
+    assert result["final_response"] == "ok"
+    assert _NamedCustomCapturingAgent.last_init["provider"] == "custom"
+    assert (
+        _NamedCustomCapturingAgent.last_init["requested_provider"]
+        == "custom:relay-b"
+    )
+    assert _NamedCustomCapturingAgent.last_init["api_key"] == "key-b"
+    assert _NamedCustomCapturingAgent.last_request_overrides == {
+        "extra_body": {"tenant": "relay-b"}
+    }
 
 
 @pytest.mark.asyncio
@@ -260,4 +373,3 @@ fallback_providers:
     assert runtime_kwargs["api_key"] == "env-secret"
     assert runtime_kwargs["base_url"] == "https://fallback.example/v1"
     assert runtime_kwargs["model"] == "fallback-model"
-

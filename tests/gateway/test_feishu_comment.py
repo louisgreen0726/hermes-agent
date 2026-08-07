@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from plugins.platforms.feishu.feishu_comment import (
     parse_drive_comment_event,
     _ALLOWED_NOTICE_TYPES,
+    _run_comment_agent,
     _sanitize_comment_text,
 )
 
@@ -178,6 +179,39 @@ class TestSanitizeCommentText(unittest.TestCase):
         self.assertNotIn(">", result)
         self.assertIn("&lt;", result)
         self.assertIn("&gt;", result)
+
+
+class TestCommentAgentRuntime(unittest.TestCase):
+    @patch("run_agent.AIAgent")
+    @patch("plugins.platforms.feishu.feishu_comment._resolve_model_and_runtime")
+    def test_named_custom_runtime_is_forwarded(self, mock_resolve, mock_agent_cls):
+        pool = object()
+        request_overrides = {"extra_body": {"route": "relay-b"}}
+        mock_resolve.return_value = (
+            "shared-model",
+            {
+                "provider": "custom",
+                "requested_provider": "custom:relay-b",
+                "api_key": "relay-b-key",
+                "base_url": "https://relay.example/v1",
+                "api_mode": "chat_completions",
+                "credential_pool": pool,
+                "request_overrides": request_overrides,
+            },
+        )
+        mock_agent_cls.return_value.run_conversation.return_value = {
+            "final_response": "ok",
+            "messages": [],
+        }
+
+        result = _run_comment_agent("hello", Mock())
+
+        self.assertEqual(result, "ok")
+        kwargs = mock_agent_cls.call_args.kwargs
+        self.assertEqual(kwargs["provider"], "custom")
+        self.assertEqual(kwargs["requested_provider"], "custom:relay-b")
+        self.assertIs(kwargs["credential_pool"], pool)
+        self.assertEqual(kwargs["request_overrides"], request_overrides)
 
 
 class TestWikiReverseLookup(unittest.TestCase):

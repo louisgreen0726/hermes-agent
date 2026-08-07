@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_cli.timeouts import get_provider_request_timeout
 from agent.prompt_builder import format_steer_marker
+from agent.context_engine import update_context_engine_model
 from agent.tool_dispatch_helpers import _trajectory_normalize_msg, make_tool_result_message
 from agent.trajectory import convert_scratchpad_to_think
 from agent.credential_pool import STATUS_EXHAUSTED
@@ -1425,6 +1426,12 @@ def restore_primary_runtime(agent) -> bool:
             "use_native_cache_layout",
             agent.api_mode == "anthropic_messages" and agent.provider == "anthropic",
         )
+        if "request_overrides" in rt:
+            agent.request_overrides = copy.deepcopy(rt["request_overrides"])
+        if "custom_provider_extra_body" in rt:
+            agent._custom_provider_extra_body = copy.deepcopy(
+                rt["custom_provider_extra_body"]
+            )
 
         # ── Rebuild client for the primary provider ──
         if agent.provider == "moa":
@@ -1457,13 +1464,15 @@ def restore_primary_runtime(agent) -> bool:
 
         # ── Restore context engine state ──
         cc = agent.context_compressor
-        cc.update_model(
+        update_context_engine_model(
+            cc,
             model=rt["compressor_model"],
             context_length=rt["compressor_context_length"],
             base_url=rt["compressor_base_url"],
             api_key=rt["compressor_api_key"],
             provider=rt["compressor_provider"],
             api_mode=rt.get("compressor_api_mode", ""),
+            requested_provider=rt.get("compressor_requested_provider"),
         )
 
         # ── Rebind and re-select the primary credential pool ──
@@ -2040,7 +2049,15 @@ def create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: boo
     return client
 
 
-def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mode=''):
+def switch_model(
+    agent,
+    new_model,
+    new_provider,
+    api_key='',
+    base_url='',
+    api_mode='',
+    requested_provider=None,
+):
     """Switch the model/provider in-place for a live agent.
 
     Called by the /model command handlers (CLI and gateway) after
@@ -2075,6 +2092,17 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
 
     old_model = agent.model
     old_provider = agent.provider
+    _old_requested_provider = getattr(agent, "requested_provider", None)
+    old_requested_provider = (
+        _old_requested_provider.strip()
+        if isinstance(_old_requested_provider, str) and _old_requested_provider.strip()
+        else old_provider
+    )
+    new_requested_provider = (
+        str(requested_provider).strip()
+        if isinstance(requested_provider, str) and requested_provider.strip()
+        else new_provider
+    )
 
     # ── Snapshot all fields the swap+rebuild can mutate ──
     # If the rebuild raises (bad API key, network error, build_anthropic_client
@@ -2108,6 +2136,18 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
     # _client_kwargs is a dict — snapshot a shallow copy so mutating the
     # live dict doesn't poison the rollback target.
     _snapshot["_client_kwargs"] = dict(getattr(agent, "_client_kwargs", {}) or {})
+    _request_overrides = getattr(agent, "request_overrides", _MISSING)
+    _custom_extra_body = getattr(agent, "_custom_provider_extra_body", _MISSING)
+    _snapshot["request_overrides"] = (
+        _MISSING
+        if _request_overrides is _MISSING
+        else copy.deepcopy(_request_overrides)
+    )
+    _snapshot["_custom_provider_extra_body"] = (
+        _MISSING
+        if _custom_extra_body is _MISSING
+        else copy.deepcopy(_custom_extra_body)
+    )
     # Snapshot the credential pool reference so a failed client rebuild can
     # restore the original pool (issue #52727: pool reload is part of this
     # switch and must be reversible on rollback).
@@ -2125,7 +2165,7 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         # ── Swap core runtime fields ──
         agent.model = new_model
         agent.provider = new_provider
-        agent.requested_provider = new_provider
+        agent.requested_provider = new_requested_provider
         # Use the new base_url when provided. When it's empty AND the
         # provider is actually changing, do NOT fall back to the current
         # (old provider's) URL — that silently pairs the new provider label
@@ -2157,6 +2197,27 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         if api_key:
             agent.api_key = api_key
 
+        # Rebind provider-specific request fields before rebuilding the client.
+        # A live agent may have inherited ``extra_body`` from the previous
+        # custom provider; keeping it would silently apply Relay A's settings
+        # to Relay B when both share one URL.
+        try:
+            from agent.agent_init import _refresh_custom_provider_extra_body
+            from hermes_cli.config import (
+                get_compatible_custom_providers,
+                load_config_readonly,
+            )
+
+            _refresh_custom_provider_extra_body(
+                agent,
+                get_compatible_custom_providers(load_config_readonly()),
+            )
+        except Exception:
+            logger.debug(
+                "custom-provider extra_body refresh skipped on switch_model",
+                exc_info=True,
+            )
+
         # ── Reload credential pool for the new provider (issue #52727) ──
         # Without this, ``recover_with_credential_pool`` sees a
         # ``pool.provider != agent.provider`` mismatch and short-circuits,
@@ -2167,14 +2228,26 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         # logged + swallowed: the switch itself must still complete.
         old_norm = (old_provider or "").strip().lower()
         new_norm = (new_provider or "").strip().lower()
-        if old_norm != new_norm or getattr(agent, "_credential_pool", None) is None:
+        old_route_norm = str(old_requested_provider or old_provider or "").strip().lower()
+        new_route_norm = str(new_requested_provider or new_provider or "").strip().lower()
+        if (
+            old_norm != new_norm
+            or old_route_norm != new_route_norm
+            or getattr(agent, "_credential_pool", None) is None
+        ):
             # A pool bound to the old provider is worse than no pool: the
             # recovery guard rejects it and every later 401/429 skips rotation.
             agent._credential_pool = None
             agent._credential_pool_entry_id = None
             try:
                 from agent.credential_pool import load_pool
-                agent._credential_pool = load_pool(new_provider)
+                pool_provider = new_provider
+                if (
+                    new_norm == "custom"
+                    and new_route_norm not in {"", "auto", "custom"}
+                ):
+                    pool_provider = new_requested_provider
+                agent._credential_pool = load_pool(pool_provider)
             except Exception as _pool_exc:  # noqa: BLE001
                 logger.warning(
                     "switch_model: credential pool reload failed for %s (%s); "
@@ -2260,6 +2333,7 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
                     agent._client_kwargs,
                     str(effective_base or ""),
                     get_compatible_custom_providers(load_config_readonly()),
+                    provider_identity=getattr(agent, "requested_provider", None),
                 )
             except Exception:
                 logger.debug("custom-provider TLS resolution skipped on switch_model", exc_info=True)
@@ -2286,7 +2360,13 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         # it and print "Agent swap failed; change applied to next session".
         for _name, _value in _snapshot.items():
             if _value is _MISSING:
-                # Attribute did not exist before the swap — don't fabricate it.
+                # Attribute did not exist before the swap. Remove it if the
+                # failed path created it so rollback restores the same object
+                # shape as well as the same values.
+                try:
+                    delattr(agent, _name)
+                except (AttributeError, TypeError):
+                    pass
                 continue
             try:
                 setattr(agent, _name, _value)
@@ -2331,16 +2411,19 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
             base_url=agent.base_url,
             api_key=_ctx_api_key,
             provider=agent.provider,
+            requested_provider=getattr(agent, "requested_provider", None),
             config_context_length=getattr(agent, "_config_context_length", None),
             custom_providers=_sm_custom_providers,
         )
-        agent.context_compressor.update_model(
+        update_context_engine_model(
+            agent.context_compressor,
             model=agent.model,
             context_length=new_context_length,
             base_url=agent.base_url,
             api_key=agent.api_key,  # context_compressor forwards to call_llm; callable preserved
             provider=agent.provider,
             api_mode=agent.api_mode,
+            requested_provider=getattr(agent, "requested_provider", None),
         )
 
     # ── Re-resolve reasoning_config from per-model override ──
@@ -2385,10 +2468,20 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         "use_prompt_caching": agent._use_prompt_caching,
         "use_native_cache_layout": agent._use_native_cache_layout,
         "reasoning_config": dict(agent.reasoning_config) if getattr(agent, "reasoning_config", None) else None,
+        "request_overrides": copy.deepcopy(
+            getattr(agent, "request_overrides", {}) or {}
+        ),
+        "custom_provider_extra_body": copy.deepcopy(
+            getattr(agent, "_custom_provider_extra_body", {}) or {}
+        ),
         "compressor_model": getattr(_cc, "model", agent.model) if _cc else agent.model,
         "compressor_base_url": getattr(_cc, "base_url", agent.base_url) if _cc else agent.base_url,
         "compressor_api_key": getattr(_cc, "api_key", "") if _cc else "",
         "compressor_provider": getattr(_cc, "provider", agent.provider) if _cc else agent.provider,
+        "compressor_requested_provider": (
+            getattr(_cc, "requested_provider", getattr(agent, "requested_provider", ""))
+            if _cc else getattr(agent, "requested_provider", "")
+        ),
         "compressor_context_length": _cc.context_length if _cc else 0,
         "compressor_api_mode": getattr(_cc, "api_mode", agent.api_mode) if _cc else agent.api_mode,
         "compressor_threshold_tokens": _cc.threshold_tokens if _cc else 0,

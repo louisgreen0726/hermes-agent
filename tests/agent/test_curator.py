@@ -1307,6 +1307,7 @@ def test_review_fork_forwards_runtime_pool_and_overrides(curator_env, monkeypatc
     def _fake_resolve_runtime_provider(**kwargs):
         return {
             "provider": "custom",
+            "requested_provider": "custom:hyper-charm",
             "api_key": "pool-token",
             "base_url": "https://hyper.charm.land/v1",
             "api_mode": "chat_completions",
@@ -1341,6 +1342,8 @@ def test_review_fork_forwards_runtime_pool_and_overrides(curator_env, monkeypatc
     meta = curator._run_llm_review("review prompt")
 
     assert meta.get("error") is None, meta.get("error")
+    assert captured["kwargs"]["provider"] == "custom"
+    assert captured["kwargs"]["requested_provider"] == "custom:hyper-charm"
     assert captured["kwargs"]["credential_pool"] is fake_pool
     assert captured["kwargs"]["request_overrides"] == fake_overrides
 

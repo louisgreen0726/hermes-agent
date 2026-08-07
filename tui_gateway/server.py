@@ -3135,6 +3135,9 @@ def _runtime_model_config(agent, existing: dict | None = None) -> dict:
     config = dict(existing or {})
     model = str(getattr(agent, "model", "") or "").strip()
     provider = str(getattr(agent, "provider", "") or "").strip()
+    requested_provider = str(
+        getattr(agent, "requested_provider", "") or ""
+    ).strip()
     base_url = str(getattr(agent, "base_url", "") or "").strip()
     api_mode = str(getattr(agent, "api_mode", "") or "").strip()
     reasoning_config = getattr(agent, "reasoning_config", None)
@@ -3144,33 +3147,33 @@ def _runtime_model_config(agent, existing: dict | None = None) -> dict:
         config["model"] = model
     if provider:
         if provider.strip().lower() == "custom":
-            # ``agent.provider`` is the RESOLVED provider, and for any named
-            # ``providers:`` / ``custom_providers:`` entry that is the literal
-            # string "custom" — persisting it loses the entry identity, so a
-            # later resume/rebuild cannot re-resolve the entry's credentials
-            # (the api_key is deliberately never persisted; see
-            # _stored_session_runtime_overrides). Recover the canonical
-            # ``custom:<name>`` menu key from the endpoint URL when present,
-            # else from the configured provider — this second fallback is the
-            # fix for sessions built WITHOUT a base_url on the override (the
-            # recurring Desktop/TUI "No LLM provider configured" regression:
-            # bare "custom" with no base_url was persisted verbatim and routed
-            # to OpenRouter with no key on the next resume).
-            try:
-                from hermes_cli.runtime_provider import (
-                    canonical_custom_identity,
-                )
-
-                provider = (
-                    canonical_custom_identity(
-                        base_url=base_url, model=model or None
+            # The resolved billing class is shared by every named custom
+            # endpoint. If the live agent still carries the requested menu
+            # identity, persist it directly; reverse-resolving by URL/model is
+            # inherently ambiguous when sibling entries share both.
+            if requested_provider and requested_provider.casefold() not in {
+                "custom",
+                "auto",
+            }:
+                provider = requested_provider
+            else:
+                # Older agents may not carry the requested identity. Recover
+                # it from the URL/model/config as a compatibility fallback.
+                try:
+                    from hermes_cli.runtime_provider import (
+                        canonical_custom_identity,
                     )
-                    or provider
-                )
-            except Exception:
-                logger.debug(
-                    "custom provider identity lookup failed", exc_info=True
-                )
+
+                    provider = (
+                        canonical_custom_identity(
+                            base_url=base_url, model=model or None
+                        )
+                        or provider
+                    )
+                except Exception:
+                    logger.debug(
+                        "custom provider identity lookup failed", exc_info=True
+                    )
         config["provider"] = provider
     if base_url:
         config["base_url"] = base_url
@@ -3689,9 +3692,16 @@ def _snapshot_agent_model_runtime(agent) -> dict:
     return {
         "model": getattr(agent, "model", ""),
         "provider": getattr(agent, "provider", ""),
+        "requested_provider": getattr(agent, "requested_provider", ""),
         "api_key": getattr(agent, "api_key", ""),
         "base_url": getattr(agent, "base_url", ""),
         "api_mode": getattr(agent, "api_mode", ""),
+        "request_overrides": copy.deepcopy(
+            getattr(agent, "request_overrides", {}) or {}
+        ),
+        "custom_provider_extra_body": copy.deepcopy(
+            getattr(agent, "_custom_provider_extra_body", {}) or {}
+        ),
         "primary_runtime": copy.deepcopy(getattr(agent, "_primary_runtime", None)),
     }
 
@@ -3700,6 +3710,15 @@ def _restore_agent_model_runtime(agent, snapshot: dict | None) -> None:
     """Restore an agent model runtime captured before a one-turn override."""
     if not snapshot or agent is None:
         return
+
+    def _restore_request_state() -> None:
+        agent.request_overrides = copy.deepcopy(
+            snapshot.get("request_overrides") or {}
+        )
+        agent._custom_provider_extra_body = copy.deepcopy(
+            snapshot.get("custom_provider_extra_body") or {}
+        )
+
     primary = snapshot.get("primary_runtime")
     if primary and hasattr(agent, "_restore_primary_runtime"):
         try:
@@ -3707,6 +3726,7 @@ def _restore_agent_model_runtime(agent, snapshot: dict | None) -> None:
             agent._fallback_activated = True
             agent._rate_limited_until = 0
             if agent._restore_primary_runtime():
+                _restore_request_state()
                 return
         except Exception:
             logger.debug("TUI one-turn model restore via primary runtime failed", exc_info=True)
@@ -3717,7 +3737,9 @@ def _restore_agent_model_runtime(agent, snapshot: dict | None) -> None:
             api_key=snapshot.get("api_key", ""),
             base_url=snapshot.get("base_url", ""),
             api_mode=snapshot.get("api_mode", ""),
+            requested_provider=snapshot.get("requested_provider") or None,
         )
+        _restore_request_state()
 
 
 def _apply_model_switch(
@@ -3767,7 +3789,11 @@ def _apply_model_switch(
     if one_turn and not agent:
         raise ValueError("/model --once requires a live session")
     if agent:
-        current_provider = getattr(agent, "provider", "") or ""
+        current_provider = (
+            getattr(agent, "requested_provider", "")
+            or getattr(agent, "provider", "")
+            or ""
+        )
         current_model = getattr(agent, "model", "") or ""
         current_base_url = getattr(agent, "base_url", "") or ""
         current_api_key = getattr(agent, "api_key", "") or ""
@@ -3866,12 +3892,21 @@ def _apply_model_switch(
 
     if agent:
         try:
+            runtime_provider = (
+                getattr(result, "runtime_provider", "")
+                or result.target_provider
+            )
+            requested_provider = (
+                getattr(result, "requested_provider", "")
+                or result.target_provider
+            )
             agent.switch_model(
                 new_model=result.new_model,
-                new_provider=result.target_provider,
+                new_provider=runtime_provider,
                 api_key=result.api_key,
                 base_url=result.base_url,
                 api_mode=result.api_mode,
+                requested_provider=requested_provider,
             )
         except Exception as exc:
             # The in-place swap rolled the agent back to the old working
@@ -5277,6 +5312,9 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
         "base_url": getattr(agent, "base_url", None) or None,
         "api_key": getattr(agent, "api_key", None) or None,
         "provider": getattr(agent, "provider", None) or None,
+        "requested_provider": (
+            getattr(agent, "requested_provider", None) or None
+        ),
         "api_mode": getattr(agent, "api_mode", None) or None,
         "acp_command": getattr(agent, "acp_command", None) or None,
         "acp_args": getattr(agent, "acp_args", None) or None,
@@ -5302,6 +5340,7 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
         or _load_reasoning_config(str(getattr(agent, "model", "") or "")),
         "service_tier": getattr(agent, "service_tier", None) or _load_service_tier(),
         "request_overrides": dict(getattr(agent, "request_overrides", {}) or {}),
+        "credential_pool": getattr(agent, "_credential_pool", None),
         "platform": "tui",
         "session_db": _get_db(),
         "fallback_model": _agent_fallback_model(agent),
@@ -5753,6 +5792,7 @@ def _make_agent(
         model=model,
         max_iterations=_cfg_max_turns(cfg, 90),
         provider=runtime.get("provider"),
+        requested_provider=runtime.get("requested_provider") or requested_provider,
         base_url=runtime.get("base_url"),
         api_key=runtime.get("api_key"),
         api_mode=runtime.get("api_mode"),
@@ -11429,6 +11469,10 @@ def _run_prompt_submit(
                     base_url=getattr(agent, "base_url", "") or "",
                     api_key=getattr(agent, "api_key", "") or "",
                     provider=getattr(agent, "provider", "") or "",
+                    custom_providers=getattr(agent, "_custom_providers", None),
+                    requested_provider=getattr(
+                        agent, "requested_provider", None
+                    ),
                     config_context_length=getattr(
                         agent, "_config_context_length", None
                     ),
@@ -16029,25 +16073,34 @@ def _model_picker_context(agent):
 
     ctx = load_picker_context()
     provider = getattr(agent, "provider", "") if agent else ""
+    requested_provider = (
+        getattr(agent, "requested_provider", "") if agent else ""
+    )
     base_url = getattr(agent, "base_url", "") if agent else ""
     if str(provider or "").strip().lower() == "custom":
-        try:
-            from hermes_cli.runtime_provider import canonical_custom_identity
+        if requested_provider and str(requested_provider).strip().casefold() not in {
+            "custom",
+            "auto",
+        }:
+            provider = str(requested_provider).strip()
+        else:
+            try:
+                from hermes_cli.runtime_provider import canonical_custom_identity
 
-            provider = (
-                canonical_custom_identity(
-                    base_url=base_url or None,
-                    config_provider=ctx.current_provider,
-                    model=(getattr(agent, "model", "") if agent else "")
-                    or None,
+                provider = (
+                    canonical_custom_identity(
+                        base_url=base_url or None,
+                        config_provider=ctx.current_provider,
+                        model=(getattr(agent, "model", "") if agent else "")
+                        or None,
+                    )
+                    or provider
                 )
-                or provider
-            )
-        except Exception:
-            logger.debug(
-                "custom provider identity recovery failed (model picker)",
-                exc_info=True,
-            )
+            except Exception:
+                logger.debug(
+                    "custom provider identity recovery failed (model picker)",
+                    exc_info=True,
+                )
 
     return ctx.with_overrides(
         current_provider=provider,

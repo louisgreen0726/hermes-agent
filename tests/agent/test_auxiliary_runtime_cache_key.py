@@ -83,6 +83,32 @@ def test_implicit_runtime_cache_key_covers_full_connection_and_auth_surface():
     assert len(set(keys)) == len(keys)
 
 
+def test_explicit_custom_cache_key_includes_named_provider_identity():
+    """TLS/header policy can differ even when URL and credential are shared."""
+    base = {
+        **_runtime("same-model", provider="custom"),
+        "requested_provider": "custom:relay-a",
+    }
+    sibling = {**base, "requested_provider": "custom:relay-b"}
+
+    first = aux._client_cache_key(
+        "custom",
+        async_mode=False,
+        base_url=base["base_url"],
+        api_key=base["api_key"],
+        main_runtime=base,
+    )
+    second = aux._client_cache_key(
+        "custom",
+        async_mode=False,
+        base_url=sibling["base_url"],
+        api_key=sibling["api_key"],
+        main_runtime=sibling,
+    )
+
+    assert first != second
+
+
 def test_implicit_runtime_is_isolated_between_concurrent_session_contexts():
     """Concurrent gateway sessions must not read each other's live runtime."""
     barrier = Barrier(2)

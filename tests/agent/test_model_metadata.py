@@ -699,6 +699,110 @@ class TestCodexOAuthContextLength:
 
 
 # =========================================================================
+# Authenticated custom-endpoint metadata isolation
+# =========================================================================
+
+
+class TestEndpointMetadataCredentialIsolation:
+    def setup_method(self):
+        import agent.model_metadata as mm
+
+        mm._endpoint_model_metadata_cache.clear()
+        mm._endpoint_model_metadata_cache_time.clear()
+
+    def test_same_endpoint_different_keys_do_not_share_catalog_metadata(self):
+        """Authenticated /models metadata is entitlement-specific."""
+        import agent.model_metadata as mm
+
+        response_a = MagicMock()
+        response_a.json.return_value = {
+            "data": [{"id": "model-a", "context_length": 128_000}]
+        }
+        response_b = MagicMock()
+        response_b.json.return_value = {
+            "data": [{"id": "model-b", "context_length": 256_000}]
+        }
+
+        with patch(
+            "agent.model_metadata.requests.get",
+            side_effect=[response_a, response_b],
+        ) as mock_get:
+            first = mm.fetch_endpoint_model_metadata(
+                "https://relay.example.com/v1",
+                api_key="sk-relay-a",
+            )
+            first_again = mm.fetch_endpoint_model_metadata(
+                "https://relay.example.com/v1",
+                api_key="sk-relay-a",
+            )
+            second = mm.fetch_endpoint_model_metadata(
+                "https://relay.example.com/v1",
+                api_key="sk-relay-b",
+            )
+
+        assert first == first_again
+        assert set(first) == {"model-a"}
+        assert set(second) == {"model-b"}
+        assert mock_get.call_count == 2
+        assert mock_get.call_args_list[0].kwargs["headers"]["Authorization"] == (
+            "Bearer sk-relay-a"
+        )
+        assert mock_get.call_args_list[1].kwargs["headers"]["Authorization"] == (
+            "Bearer sk-relay-b"
+        )
+        assert all(
+            "sk-relay" not in repr(key)
+            for key in mm._endpoint_model_metadata_cache
+        )
+
+    def test_persistent_context_cache_is_scoped_for_named_same_url_routes(
+        self, tmp_path, monkeypatch
+    ):
+        """A disk cache hit for one named credential cannot short-circuit another."""
+        import agent.model_metadata as mm
+
+        cache_file = tmp_path / "context_length_cache.yaml"
+        monkeypatch.setattr(mm, "_get_context_cache_path", lambda: cache_file)
+        relay_url = "https://relay.example.com/v1"
+
+        with patch.object(
+            mm, "_endpoint_scoped_context_length", return_value=None
+        ), patch.object(
+            mm, "_resolve_endpoint_context_length", return_value=None
+        ), patch.object(
+            mm, "_query_ollama_api_show", side_effect=[128_000, 512_000]
+        ) as probe:
+            first = mm.get_model_context_length(
+                "shared-model",
+                base_url=relay_url,
+                api_key="sk-relay-a",
+                provider="custom",
+                requested_provider="custom:relay-a",
+            )
+            second = mm.get_model_context_length(
+                "shared-model",
+                base_url=relay_url,
+                api_key="sk-relay-b",
+                provider="custom",
+                requested_provider="custom:relay-b",
+            )
+            first_again = mm.get_model_context_length(
+                "shared-model",
+                base_url=relay_url,
+                api_key="sk-relay-a",
+                provider="custom",
+                requested_provider="custom:relay-a",
+            )
+
+        assert (first, second, first_again) == (128_000, 512_000, 128_000)
+        assert probe.call_count == 2
+        persisted = yaml.safe_load(cache_file.read_text())["context_lengths"]
+        assert sorted(persisted.values()) == [128_000, 512_000]
+        assert len(persisted) == 2
+        assert all("sk-relay" not in key for key in persisted)
+
+
+# =========================================================================
 # Nous Portal context-window resolution (provider="nous")
 # =========================================================================
 

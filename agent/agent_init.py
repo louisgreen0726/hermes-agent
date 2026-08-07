@@ -19,6 +19,7 @@ preserved.
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
@@ -31,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 from agent.context_compressor import ContextCompressor
+from agent.context_engine import update_context_engine_model
 from agent.iteration_budget import IterationBudget
 from agent.memory_manager import StreamingContextScrubber
 from agent.model_metadata import (
@@ -388,11 +390,7 @@ def _custom_provider_extra_body_for_agent(
     custom_providers: List[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     provider_norm = (provider or "").strip().lower()
-    if provider_norm == "custom":
-        provider_key_filter = ""
-    elif provider_norm.startswith("custom:"):
-        provider_key_filter = provider_norm.split(":", 1)[1].strip()
-    else:
+    if provider_norm != "custom" and not provider_norm.startswith("custom:"):
         return None
 
     target_url = _normalized_custom_base_url(base_url)
@@ -400,16 +398,13 @@ def _custom_provider_extra_body_for_agent(
         return None
 
     fallback: Optional[Dict[str, Any]] = None
+    from hermes_cli.config import custom_provider_matches_identity
+
     for entry in custom_providers or []:
         if not isinstance(entry, dict):
             continue
-        if provider_key_filter:
-            entry_keys = {
-                str(entry.get("provider_key", "") or "").strip().lower(),
-                str(entry.get("name", "") or "").strip().lower(),
-            }
-            if provider_key_filter not in entry_keys:
-                continue
+        if not custom_provider_matches_identity(entry, provider):
+            continue
         if _normalized_custom_base_url(entry.get("base_url")) != target_url:
             continue
         extra_body = entry.get("extra_body")
@@ -427,12 +422,16 @@ def _custom_provider_extra_body_for_agent(
 
 def _merge_custom_provider_extra_body(agent, custom_providers: List[Dict[str, Any]]) -> None:
     extra_body = _custom_provider_extra_body_for_agent(
-        provider=agent.provider,
+        # ``agent.provider`` is the resolved billing class (usually ``custom``)
+        # and is shared by every named endpoint.  The requested identity is
+        # what selects the correct sibling config row.
+        provider=getattr(agent, "requested_provider", None) or agent.provider,
         model=agent.model,
         base_url=agent.base_url,
         custom_providers=custom_providers,
     )
     if not extra_body:
+        agent._custom_provider_extra_body = {}
         return
 
     overrides = dict(getattr(agent, "request_overrides", {}) or {})
@@ -442,6 +441,31 @@ def _merge_custom_provider_extra_body(agent, custom_providers: List[Dict[str, An
         merged_extra_body.update(existing_extra_body)
     overrides["extra_body"] = merged_extra_body
     agent.request_overrides = overrides
+    # Keep provenance so an in-place /model switch can remove only the values
+    # injected by the previous custom provider while preserving caller-supplied
+    # request overrides.
+    agent._custom_provider_extra_body = dict(extra_body)
+
+
+def _refresh_custom_provider_extra_body(
+    agent,
+    custom_providers: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Rebind provider-generated ``extra_body`` after a runtime switch."""
+    overrides = dict(getattr(agent, "request_overrides", {}) or {})
+    current = overrides.get("extra_body")
+    previous = getattr(agent, "_custom_provider_extra_body", {}) or {}
+    if isinstance(current, dict) and isinstance(previous, dict):
+        for key, value in previous.items():
+            # Do not erase a caller value that replaced the generated one.
+            if current.get(key) == value:
+                current.pop(key, None)
+        if current:
+            overrides["extra_body"] = current
+        else:
+            overrides.pop("extra_body", None)
+    agent.request_overrides = overrides
+    _merge_custom_provider_extra_body(agent, custom_providers or [])
 
 
 def init_agent(
@@ -1304,6 +1328,7 @@ def init_agent(
                 client_kwargs,
                 _cp_base_url,
                 _cp_entries,
+                provider_identity=getattr(agent, "requested_provider", None),
             )
             # Per-provider extra HTTP headers (providers.<name>.extra_headers /
             # custom_providers[].extra_headers) — proxies, gateways, custom
@@ -1313,6 +1338,7 @@ def init_agent(
                 client_kwargs,
                 _cp_base_url,
                 _cp_entries,
+                provider_identity=getattr(agent, "requested_provider", None),
             )
         except Exception:
             logger.debug("custom-provider TLS resolution skipped", exc_info=True)
@@ -2223,6 +2249,7 @@ def init_agent(
                 model=agent.model,
                 base_url=agent.base_url,
                 custom_providers=_custom_providers,
+                provider_identity=getattr(agent, "requested_provider", None),
             )
             if _cp_ctx_resolved:
                 _config_context_length = int(_cp_ctx_resolved)
@@ -2233,11 +2260,14 @@ def init_agent(
         # wasn't a valid positive int — the helper silently skips those.
         if _config_context_length is None:
             _target = _normalize_route_base_url(agent.base_url)
+            from hermes_cli.config import custom_provider_matches_identity
             for _cp_entry in _custom_providers:
                 if not isinstance(_cp_entry, dict):
                     continue
                 _cp_url = _normalize_route_base_url(_cp_entry.get("base_url"))
-                if _target and _cp_url == _target:
+                if _target and _cp_url == _target and custom_provider_matches_identity(
+                    _cp_entry, getattr(agent, "requested_provider", None)
+                ):
                     _cp_models = _cp_entry.get("models", {})
                     if isinstance(_cp_models, dict):
                         _cp_model_cfg = _cp_models.get(agent.model, {})
@@ -2309,7 +2339,6 @@ def init_agent(
                 # connections, clients); in that case fall back to the built-in
                 # compressor with an ACCURATE message rather than silently
                 # mislabelling it "not found".
-                import copy
                 try:
                     _selected_engine = copy.deepcopy(_candidate)
                 except Exception as _copy_err:
@@ -2347,6 +2376,7 @@ def init_agent(
             api_key=getattr(agent, "api_key", ""),
             config_context_length=_config_context_length,
             provider=agent.provider,
+            requested_provider=getattr(agent, "requested_provider", None),
             custom_providers=_custom_providers,
         )
         # Per-model threshold overrides are part of the explicit
@@ -2359,13 +2389,15 @@ def init_agent(
         # and may ignore the attribute.
         if compression_model_thresholds:
             agent.context_compressor.model_thresholds = compression_model_thresholds
-        agent.context_compressor.update_model(
+        update_context_engine_model(
+            agent.context_compressor,
             model=agent.model,
             context_length=_plugin_ctx_len,
             base_url=agent.base_url,
             api_key=getattr(agent, "api_key", ""),
             provider=agent.provider,
             api_mode=agent.api_mode,
+            requested_provider=getattr(agent, "requested_provider", None),
         )
         if not agent.quiet_mode:
             _ra().logger.info("Using context engine: %s", _selected_engine.name)
@@ -2383,6 +2415,7 @@ def init_agent(
             config_context_length=_config_context_length,
             provider=agent.provider,
             api_mode=agent.api_mode,
+            requested_provider=getattr(agent, "requested_provider", None),
             abort_on_summary_failure=compression_abort_on_summary_failure,
             max_tokens=agent.max_tokens,
             model_thresholds=compression_model_thresholds,
@@ -2662,6 +2695,12 @@ def init_agent(
         "client_kwargs": dict(agent._client_kwargs),
         "use_prompt_caching": agent._use_prompt_caching,
         "use_native_cache_layout": agent._use_native_cache_layout,
+        "request_overrides": copy.deepcopy(
+            getattr(agent, "request_overrides", {}) or {}
+        ),
+        "custom_provider_extra_body": copy.deepcopy(
+            getattr(agent, "_custom_provider_extra_body", {}) or {}
+        ),
         # Context engine state that _try_activate_fallback() overwrites.
         # Use getattr for model/base_url/api_key/provider since plugin
         # engines may not have these (they're ContextCompressor-specific).
@@ -2669,7 +2708,11 @@ def init_agent(
         "compressor_base_url": getattr(_cc, "base_url", agent.base_url),
         "compressor_api_key": getattr(_cc, "api_key", ""),
         "compressor_provider": getattr(_cc, "provider", agent.provider),
+        "compressor_requested_provider": getattr(
+            _cc, "requested_provider", getattr(agent, "requested_provider", "")
+        ),
         "compressor_context_length": _cc.context_length,
+        "compressor_api_mode": getattr(_cc, "api_mode", agent.api_mode),
         "compressor_threshold_tokens": _cc.threshold_tokens,
     }
     if agent.api_mode == "anthropic_messages":

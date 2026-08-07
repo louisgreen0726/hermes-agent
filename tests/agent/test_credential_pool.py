@@ -2234,6 +2234,46 @@ def test_custom_endpoint_pool_seeds_from_model_config(tmp_path, monkeypatch):
     assert model_entries[0].access_token == "sk-model-key"
 
 
+def test_named_model_config_key_seeds_only_matching_same_url_pool(
+    tmp_path, monkeypatch
+):
+    """A named route must not seed the first sibling pool at the same URL."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1})
+
+    import yaml
+
+    relay_url = "https://relay.example.test/v1"
+    config_path = tmp_path / "hermes" / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "custom_providers": [
+                    {"name": "Relay A", "base_url": relay_url},
+                    {"name": "Relay B", "base_url": relay_url},
+                ],
+                "model": {
+                    "provider": "custom:relay-b",
+                    "base_url": relay_url,
+                    "api_key": "sk-relay-b",
+                },
+            }
+        )
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool_a = load_pool("custom:relay-a")
+    pool_b = load_pool("custom:relay-b")
+
+    assert not [entry for entry in pool_a.entries() if entry.source == "model_config"]
+    model_entries = [
+        entry for entry in pool_b.entries() if entry.source == "model_config"
+    ]
+    assert len(model_entries) == 1
+    assert model_entries[0].access_token == "sk-relay-b"
+
+
 def test_custom_pool_does_not_break_existing_providers(tmp_path, monkeypatch):
     """Existing registry providers work exactly as before with custom pool support."""
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
@@ -2301,8 +2341,8 @@ def test_get_custom_provider_pool_key_prefers_name_over_base_url(tmp_path, monke
 
     from agent.credential_pool import get_custom_provider_pool_key
 
-    # Without provider_name, first match wins (backward compatible)
-    assert get_custom_provider_pool_key("http://gateway:8080/v1") == "custom:provider-a"
+    # Without provider_name, a shared URL is not enough identity to select a key.
+    assert get_custom_provider_pool_key("http://gateway:8080/v1") is None
 
     # With provider_name, exact name match wins regardless of order
     assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="provider-b") == "custom:provider-b"
@@ -2314,11 +2354,122 @@ def test_get_custom_provider_pool_key_prefers_name_over_base_url(tmp_path, monke
         provider_name="provider-b",
     ) is None
 
-    # An unknown name still uses the legacy URL fallback.
-    assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="nonexistent") == "custom:provider-a"
+    # An unknown name cannot make a shared URL safe to resolve.
+    assert get_custom_provider_pool_key(
+        "http://gateway:8080/v1", provider_name="nonexistent"
+    ) is None
 
-    # Empty provider_name is same as None (backward compatible)
-    assert get_custom_provider_pool_key("http://gateway:8080/v1", provider_name="") == "custom:provider-a"
+    # Empty provider_name is same as None.
+    assert get_custom_provider_pool_key(
+        "http://gateway:8080/v1", provider_name=""
+    ) is None
+
+
+def test_unique_legacy_display_pool_alias_remains_compatible(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    import yaml
+
+    home = tmp_path / "hermes"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "relay-route": {
+                        "name": "Old Relay Name",
+                        "api": "https://relay.example.test/v1",
+                    }
+                },
+                "credential_pool_strategies": {
+                    "custom:old-relay-name": "round_robin"
+                },
+            }
+        )
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "custom:old-relay-name": [
+                    {
+                        "id": "legacy-entry",
+                        "label": "legacy",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "legacy-token",
+                        "base_url": "https://relay.example.test/v1",
+                    }
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import get_pool_strategy, load_pool
+
+    assert get_pool_strategy("custom:relay-route") == "round_robin"
+    pool = load_pool("custom:relay-route")
+    assert pool.provider == "custom:relay-route"
+    assert [entry.access_token for entry in pool.entries()] == ["legacy-token"]
+
+
+def test_legacy_display_alias_never_collides_with_modern_mapping_key(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    import yaml
+
+    home = tmp_path / "hermes"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "foo": {
+                        "name": "Provider A",
+                        "api": "https://relay.example.test/v1",
+                    },
+                    "bar": {
+                        "name": "foo",
+                        "api": "https://relay.example.test/v1",
+                    },
+                },
+                "credential_pool_strategies": {"custom:foo": "round_robin"},
+            }
+        )
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "custom:foo": [
+                    {
+                        "id": "provider-a-entry",
+                        "label": "provider-a",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "provider-a-token",
+                        "base_url": "https://relay.example.test/v1",
+                    }
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import (
+        STRATEGY_FILL_FIRST,
+        get_pool_strategy,
+        load_pool,
+    )
+
+    # custom:foo is Provider A's canonical store, not Provider B's old display
+    # alias. Provider B must neither inherit its strategy nor read its token.
+    assert get_pool_strategy("custom:bar") == STRATEGY_FILL_FIRST
+    assert not load_pool("custom:bar").has_credentials()
+    assert load_pool("custom:foo").select().access_token == "provider-a-token"
 
 
 def test_list_custom_pool_providers(tmp_path, monkeypatch):

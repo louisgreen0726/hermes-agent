@@ -140,3 +140,41 @@ def test_cli_restore_model_runtime_prefers_primary_runtime():
     assert stub.agent.model == "old/model"
     assert stub.agent.provider == "openrouter"
     assert stub.agent.calls == []
+
+
+def test_cli_restore_keeps_named_custom_identity_and_request_state():
+    import cli as cli_mod
+
+    stub = _StubCLI()
+    stub.provider = "custom"
+    stub.requested_provider = "custom:relay-b"
+    stub.model = "shared-model"
+    stub.api_key = "key-b"
+    stub.base_url = "https://shared.example/v1"
+    stub.agent = _FakeAgent()
+    stub.agent.provider = "custom"
+    stub.agent.requested_provider = "custom:relay-b"
+    stub.agent.request_overrides = {
+        "temperature": 0.2,
+        "extra_body": {"tenant": "relay-b", "caller": True},
+    }
+    stub.agent._custom_provider_extra_body = {"tenant": "relay-b"}
+    stub.agent._primary_runtime = None
+
+    snapshot = cli_mod.HermesCLI._snapshot_model_runtime(stub)
+    stub.agent.requested_provider = "custom:relay-a"
+    stub.agent.request_overrides = {
+        "extra_body": {"tenant": "relay-a"}
+    }
+    stub.agent._custom_provider_extra_body = {"tenant": "relay-a"}
+
+    cli_mod.HermesCLI._restore_model_runtime_snapshot(stub, snapshot)
+
+    call = stub.agent.calls[-1]
+    assert call["new_provider"] == "custom"
+    assert call["requested_provider"] == "custom:relay-b"
+    assert stub.agent.request_overrides == {
+        "temperature": 0.2,
+        "extra_body": {"tenant": "relay-b", "caller": True},
+    }
+    assert stub.agent._custom_provider_extra_body == {"tenant": "relay-b"}

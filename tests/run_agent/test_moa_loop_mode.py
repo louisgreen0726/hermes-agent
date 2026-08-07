@@ -308,6 +308,92 @@ def test_moa_slots_routed_through_resolve_runtime_provider(monkeypatch):
     assert rt["api_key"] == "key-for-minimax"
 
 
+def test_moa_named_custom_slot_keeps_route_identity_and_request_settings(
+    monkeypatch,
+):
+    """Same-endpoint custom slots must remain distinct inside call_llm."""
+    from agent import moa_loop
+
+    def fake_resolve(*, requested, target_model=None):
+        assert requested == "custom:relay-b"
+        assert target_model == "shared-model"
+        return {
+            "provider": "custom",
+            "requested_provider": "custom:relay-b",
+            "api_mode": "chat_completions",
+            "base_url": "https://relay.example.test/v1",
+            "api_key": "key-b",
+            "extra_headers": {"X-Tenant": "tenant-b"},
+            "request_overrides": {
+                "extra_body": {"tenant": "relay-b"},
+            },
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider", fake_resolve
+    )
+
+    rt = moa_loop._slot_runtime(
+        {"provider": "custom:relay-b", "model": "shared-model"}
+    )
+
+    assert rt["provider"] == "custom:relay-b"
+    assert rt["api_key"] == "key-b"
+    assert rt["extra_headers"] == {"X-Tenant": "tenant-b"}
+    assert rt["extra_body"] == {"tenant": "relay-b"}
+    assert rt["main_runtime"] == {
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "model": "shared-model",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "key-b",
+        "api_mode": "chat_completions",
+    }
+
+
+def test_moa_named_custom_reference_forwards_scoped_runtime(monkeypatch):
+    """Reference calls keep the selected route's headers and identity."""
+    from agent import moa_loop
+
+    calls = []
+    main_runtime = {
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "model": "shared-model",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "key-b",
+        "api_mode": "chat_completions",
+    }
+    monkeypatch.setattr(
+        moa_loop,
+        "_slot_runtime",
+        lambda _slot: {
+            "provider": "custom:relay-b",
+            "model": "shared-model",
+            "base_url": main_runtime["base_url"],
+            "api_key": main_runtime["api_key"],
+            "api_mode": main_runtime["api_mode"],
+            "main_runtime": main_runtime,
+            "extra_headers": {"X-Tenant": "tenant-b"},
+        },
+    )
+
+    def fake_call_llm(**kwargs):
+        calls.append(kwargs)
+        return _response("relay-b advice")
+
+    monkeypatch.setattr(moa_loop, "call_llm", fake_call_llm)
+
+    _label, text, _accounting = moa_loop._run_reference(
+        {"provider": "custom:relay-b", "model": "shared-model"},
+        [{"role": "user", "content": "solve this"}],
+    )
+
+    assert text == "relay-b advice"
+    assert calls[0]["main_runtime"] == main_runtime
+    assert calls[0]["extra_headers"] == {"X-Tenant": "tenant-b"}
+
+
 def test_moa_codex_slot_preserves_provider_identity(monkeypatch):
     """Codex slots must not become custom chat-completions endpoints.
 
@@ -2587,14 +2673,14 @@ def test_reference_trim_unresolvable_window_is_a_noop(monkeypatch):
 
 
 def test_reference_trim_context_length_cache_hits_once(monkeypatch):
-    """A shared per-turn cache resolves each (provider, model) window once."""
+    """A shared per-turn cache resolves one runtime route's window once."""
     cache = {}
     stub = _CountingCtxLen(10_000_000)
     msgs = _advisory_view(2)
     for _ in range(4):
         _trim(list(msgs), cache=cache, counting=stub, monkeypatch=monkeypatch)
     assert stub.calls == 1
-    assert cache == {("openrouter", "small-window"): 10_000_000}
+    assert list(cache.values()) == [10_000_000]
 
 
 def test_reference_trim_caches_resolution_failures(monkeypatch):
@@ -2606,7 +2692,84 @@ def test_reference_trim_caches_resolution_failures(monkeypatch):
         out = _trim(list(msgs), cache=cache, counting=stub, monkeypatch=monkeypatch)
         assert out == msgs
     assert stub.calls == 1
-    assert cache == {("openrouter", "small-window"): None}
+    assert list(cache.values()) == [None]
+
+
+def test_reference_trim_cache_isolates_named_custom_routes(
+    monkeypatch, tmp_path
+):
+    """Modern provider keys sharing one relay retain separate windows."""
+    from agent import model_metadata, moa_loop
+
+    home = tmp_path / "hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    (home / "config.yaml").write_text(
+        """
+providers:
+  relay-a:
+    name: Relay A
+    base_url: https://relay.example.test/v1
+    api_key: key-a
+  relay-b:
+    name: Relay B
+    base_url: https://relay.example.test/v1
+    api_key: key-b
+""".strip(),
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    def fake_context_length(**kwargs):
+        calls.append(kwargs)
+        return 128_000 if kwargs["api_key"] == "key-a" else 512_000
+
+    monkeypatch.setattr(
+        model_metadata, "get_model_context_length", fake_context_length
+    )
+    messages = _advisory_view(2)
+    cache = {}
+    route_a = {
+        "provider": "relay-a",
+        "model": "shared-model",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "key-a",
+    }
+    route_b = {
+        "provider": "relay-b",
+        "model": "shared-model",
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "key-b",
+    }
+
+    for slot, runtime in (
+        ({"provider": "relay-a", "model": "shared-model"}, route_a),
+        ({"provider": "relay-a", "model": "shared-model"}, route_a),
+        ({"provider": "relay-b", "model": "shared-model"}, route_b),
+        ({"provider": "relay-b", "model": "shared-model"}, route_b),
+    ):
+        moa_loop._trim_messages_for_reference(
+            list(messages),
+            slot,
+            runtime,
+            context_length_cache=cache,
+        )
+
+    assert [
+        (
+            call["provider"],
+            call["requested_provider"],
+            call["api_key"],
+        )
+        for call in calls
+    ] == [
+        ("custom", "relay-a", "key-a"),
+        ("custom", "relay-b", "key-b"),
+    ]
+    assert sorted(cache.values()) == [128_000, 512_000]
+    assert "key-a" not in repr(tuple(cache))
+    assert "key-b" not in repr(tuple(cache))
 
 
 def test_run_reference_trims_oversized_view_before_calling(monkeypatch):

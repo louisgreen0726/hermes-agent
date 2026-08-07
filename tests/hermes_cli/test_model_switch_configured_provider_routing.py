@@ -57,6 +57,23 @@ def _run_switch(
     resolution, normalization, and model metadata.  This isolates the new
     configured-provider detection step.
     """
+    configured_provider_ids = set((user_providers or {}).keys())
+
+    def _resolve_runtime_provider(**kwargs):
+        requested = str(kwargs.get("requested") or current_provider)
+        is_custom_route = (
+            requested in configured_provider_ids
+            or requested.startswith("custom:")
+            or requested == "custom"
+        )
+        return {
+            "api_key": "***",
+            "base_url": current_base_url or "http://resolved/v1",
+            "provider": "custom" if is_custom_route else requested,
+            "requested_provider": requested,
+            "api_mode": "",
+        }
+
     with patch("hermes_cli.model_switch.resolve_alias", return_value=None), \
          patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
          patch("hermes_cli.model_switch.normalize_model_for_provider", side_effect=lambda model, provider: model), \
@@ -66,11 +83,7 @@ def _run_switch(
          patch("hermes_cli.model_switch.get_model_capabilities", return_value=None), \
          patch(
              "hermes_cli.runtime_provider.resolve_runtime_provider",
-             return_value={
-                 "api_key": "***",
-                 "base_url": current_base_url or "http://resolved/v1",
-                 "api_mode": "",
-             },
+             side_effect=_resolve_runtime_provider,
          ):
         return switch_model(
             raw_input=raw_input,
@@ -100,6 +113,8 @@ def test_typed_configured_model_routes_away_from_openai_codex():
     )
     assert result.success is True, result.error_message
     assert result.target_provider == "local-ollama"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "local-ollama"
     assert result.new_model == "qwen3.5-4b"
 
 
@@ -121,6 +136,8 @@ def test_typed_configured_model_routes_to_custom_provider():
     )
     assert result.success is True, result.error_message
     assert result.target_provider == "custom:mylocal"
+    assert result.runtime_provider == "custom"
+    assert result.requested_provider == "custom:mylocal"
     assert result.new_model == "qwen3.5-4b"
 
 
@@ -222,6 +239,8 @@ def test_no_configured_match_leaves_current_provider_for_soft_accept():
     )
     assert result.success is True, result.error_message
     assert result.target_provider == "openai-codex"
+    assert result.runtime_provider == "openai-codex"
+    assert result.requested_provider == "openai-codex"
     assert result.new_model == "gpt-5.9-codex-hidden"
 
 

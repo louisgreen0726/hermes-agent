@@ -93,9 +93,10 @@ def merge_preflight_compression_warning(
     old_ctx = int(getattr(cc, "context_length", 0) or 0)
     new_ctx = resolve_display_context_length(
         result.new_model,
-        result.target_provider,
+        result.runtime_provider or result.target_provider,
         base_url=result.base_url or getattr(agent, "base_url", "") or "",
         api_key=result.api_key or getattr(agent, "api_key", "") or "",
+        requested_provider=result.requested_provider or result.target_provider,
         model_info=result.model_info,
         custom_providers=custom_providers,
         config_context_length=config_context_length,

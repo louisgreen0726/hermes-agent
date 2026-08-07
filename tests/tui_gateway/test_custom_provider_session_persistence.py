@@ -53,8 +53,8 @@ PROVIDERS_DICT_CONFIG = {
 }
 
 
-def _custom_agent(base_url=MIMO_URL):
-    return types.SimpleNamespace(
+def _custom_agent(base_url=MIMO_URL, requested_provider=None):
+    agent = types.SimpleNamespace(
         model="mimo-v2.5-pro",
         provider="custom",
         base_url=base_url,
@@ -62,9 +62,89 @@ def _custom_agent(base_url=MIMO_URL):
         reasoning_config=None,
         service_tier=None,
     )
+    if requested_provider is not None:
+        agent.requested_provider = requested_provider
+    return agent
+
+
+def test_one_turn_restore_keeps_named_same_url_provider_identity():
+    from tui_gateway.server import (
+        _restore_agent_model_runtime,
+        _snapshot_agent_model_runtime,
+    )
+
+    agent = _custom_agent(
+        base_url="https://shared.example/v1",
+        requested_provider="custom:relay-b",
+    )
+    agent.api_key = "key-b"
+    agent.request_overrides = {
+        "temperature": 0.2,
+        "extra_body": {"tenant": "relay-b", "caller": True},
+    }
+    agent._custom_provider_extra_body = {"tenant": "relay-b"}
+    agent._primary_runtime = None
+    snapshot = _snapshot_agent_model_runtime(agent)
+    captured = {}
+
+    def switch_model(**kwargs):
+        captured.update(kwargs)
+        agent.model = kwargs["new_model"]
+        agent.provider = kwargs["new_provider"]
+        agent.requested_provider = kwargs["requested_provider"]
+        agent.api_key = kwargs["api_key"]
+
+    agent.switch_model = switch_model
+    agent.requested_provider = "custom:relay-a"
+    agent.api_key = "key-a"
+    agent.request_overrides = {"extra_body": {"tenant": "relay-a"}}
+    agent._custom_provider_extra_body = {"tenant": "relay-a"}
+
+    _restore_agent_model_runtime(agent, snapshot)
+
+    assert captured["new_provider"] == "custom"
+    assert captured["requested_provider"] == "custom:relay-b"
+    assert agent.requested_provider == "custom:relay-b"
+    assert agent.api_key == "key-b"
+    assert agent.request_overrides == {
+        "temperature": 0.2,
+        "extra_body": {"tenant": "relay-b", "caller": True},
+    }
+    assert agent._custom_provider_extra_body == {"tenant": "relay-b"}
 
 
 class TestRuntimeModelConfigPersistsEntryIdentity:
+    def test_live_requested_identity_wins_for_same_url_and_model(self, monkeypatch):
+        """A live agent must persist Relay B, even when URL/model also match A."""
+        config = {
+            "custom_providers": [
+                {
+                    "name": "Relay A",
+                    "base_url": "https://shared.example/v1",
+                    "api_key": "key-a",
+                    "model": "shared-model",
+                },
+                {
+                    "name": "Relay B",
+                    "base_url": "https://shared.example/v1",
+                    "api_key": "key-b",
+                    "model": "shared-model",
+                },
+            ]
+        }
+        monkeypatch.setattr(rp, "load_config", lambda: config)
+
+        from tui_gateway.server import _runtime_model_config
+
+        persisted = _runtime_model_config(
+            _custom_agent(
+                base_url="https://shared.example/v1",
+                requested_provider="custom:relay-b",
+            )
+        )
+
+        assert persisted["provider"] == "custom:relay-b"
+
     def test_persists_menu_key_instead_of_resolved_custom(self, monkeypatch):
         monkeypatch.setattr(rp, "load_config", lambda: LEGACY_LIST_CONFIG)
 
@@ -162,6 +242,52 @@ class TestResumeRoundTrip:
         assert kwargs["provider"] == "custom"
         assert kwargs["base_url"] == MIMO_URL
         assert kwargs["api_key"] == MIMO_KEY
+
+    def test_round_trip_same_url_and_model_restores_requested_sibling(
+        self, monkeypatch
+    ):
+        config = {
+            "custom_providers": [
+                {
+                    "name": "Relay A",
+                    "base_url": "https://shared.example/v1",
+                    "api_key": "key-a",
+                    "model": "shared-model",
+                },
+                {
+                    "name": "Relay B",
+                    "base_url": "https://shared.example/v1",
+                    "api_key": "key-b",
+                    "model": "shared-model",
+                },
+            ]
+        }
+        monkeypatch.setattr(rp, "load_config", lambda: config)
+
+        from tui_gateway.server import (
+            _runtime_model_config,
+            _stored_session_runtime_overrides,
+        )
+
+        model_config = _runtime_model_config(
+            _custom_agent(
+                base_url="https://shared.example/v1",
+                requested_provider="custom:relay-b",
+            )
+        )
+        row = {
+            "model": "shared-model",
+            "model_config": json.dumps(model_config),
+        }
+        overrides = _stored_session_runtime_overrides(row)
+        kwargs = _make_agent_with_override(
+            overrides["model_override"],
+            monkeypatch,
+            config,
+        )
+
+        assert kwargs["provider"] == "custom"
+        assert kwargs["api_key"] == "key-b"
 
     def test_legacy_row_with_bare_custom_heals_via_base_url(self, monkeypatch):
         """Rows persisted BEFORE the fix stored provider="custom"; the
@@ -505,5 +631,3 @@ class TestModelNameRecoversEntryIdentity:
 
         assert kwargs["base_url"] == ULTRA_URL
         assert kwargs["api_key"] == "sk-ultra"
-
-

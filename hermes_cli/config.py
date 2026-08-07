@@ -5524,16 +5524,31 @@ def get_compatible_custom_providers(
         model = str(entry.get("model", "") or "").strip().lower()
         pair = (name, base_url, model)
 
-        if provider_key and provider_key in seen_provider_keys:
-            return
-        if name and base_url and pair in seen_name_url_pairs:
+        if provider_key:
+            # Keyed providers own their identity by mapping key. Two entries
+            # may intentionally have the same display name, endpoint and model
+            # while carrying different credentials or transport settings.
+            if provider_key in seen_provider_keys:
+                return
+            compatible.append(entry)
+            seen_provider_keys.add(provider_key)
+            if name and base_url:
+                seen_name_url_pairs.add(pair)
             return
 
+        # Legacy list rows have no durable key, so retain their historical
+        # tuple identity. A matching keyed row (processed first below) wins and
+        # suppresses the compatibility duplicate.
+        if name and base_url and pair in seen_name_url_pairs:
+            return
         compatible.append(entry)
-        if provider_key:
-            seen_provider_keys.add(provider_key)
         if name and base_url:
             seen_name_url_pairs.add(pair)
+
+    # Modern keyed rows are authoritative when a stale legacy row describing
+    # the same route remains in config after a partial migration.
+    for entry in providers_dict_to_custom_providers(config.get("providers")):
+        _append_if_new(entry)
 
     custom_providers = config.get("custom_providers")
     if custom_providers is not None:
@@ -5541,9 +5556,6 @@ def get_compatible_custom_providers(
             return []
         for entry in custom_providers:
             _append_if_new(_normalize_custom_provider_entry(entry))
-
-    for entry in providers_dict_to_custom_providers(config.get("providers")):
-        _append_if_new(entry)
 
     return compatible
 
@@ -5562,10 +5574,66 @@ def _coerce_ssl_verify(value: Any) -> Optional[bool]:
     return None
 
 
+def _normalize_custom_provider_identity(value: Any) -> str:
+    """Normalize a routed custom-provider identity for config matching.
+
+    Runtime routes use ``custom:<name>`` while config entries may identify the
+    same provider by either their display ``name`` or keyed ``provider_key``.
+    Keep this small and local so the config lookup helpers do not need to
+    reverse-resolve an endpoint URL (which is ambiguous for shared relays).
+    """
+    # Match the runtime provider slug normalizer: ordinary spaces become
+    # hyphens, but whitespace immediately after ``custom:`` is significant.
+    # Thus ``custom:Relay A`` and ``custom:custom:Relay A`` identify the same
+    # entry, while the malformed ``custom: Relay A`` does not accidentally
+    # match it. Strip every *contiguous* custom prefix because provider keys
+    # written by older config migrations may themselves begin with
+    # ``custom:``.
+    identity = str(value or "").strip().casefold().replace(" ", "-")
+    while identity.startswith("custom:"):
+        identity = identity[len("custom:") :]
+    return identity
+
+
+def custom_provider_matches_identity(
+    entry: Any,
+    provider_identity: Optional[str],
+) -> bool:
+    """Return whether *entry* is the explicitly requested custom provider.
+
+    ``None``/empty and the bare ``custom`` billing label intentionally mean
+    "identity unavailable"; callers may then retain their legacy URL-only
+    fallback. Once a concrete identity is supplied, a same-URL sibling must
+    not match merely because it appears first in the config list.
+    """
+    if not isinstance(entry, dict):
+        return False
+    raw_identity = (
+        str(provider_identity or "").strip().casefold().replace(" ", "-")
+    )
+    normalized = _normalize_custom_provider_identity(provider_identity)
+    # A bare billing label has no entry identity and deliberately retains the
+    # legacy URL-only first-match behavior. An explicit ``custom:custom`` is
+    # different: it names an entry whose key/name is literally ``custom``.
+    if not raw_identity or raw_identity in {"custom", "auto"}:
+        return True
+    candidates = (
+        entry.get("name"),
+        entry.get("provider_key"),
+    )
+    return any(
+        _normalize_custom_provider_identity(candidate) == normalized
+        for candidate in candidates
+        if str(candidate or "").strip()
+    )
+
+
 def get_custom_provider_tls_settings(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
+    *,
+    provider_identity: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return TLS settings from a matching ``custom_providers`` / ``providers`` entry."""
     if custom_providers is None:
@@ -5583,6 +5651,8 @@ def get_custom_provider_tls_settings(
         entry_url = normalize_route_base_url(entry.get("base_url"))
         if not entry_url or entry_url != target_url:
             continue
+        if not custom_provider_matches_identity(entry, provider_identity):
+            continue
         out: Dict[str, Any] = {}
         ca = entry.get("ssl_ca_cert")
         if isinstance(ca, str) and ca.strip():
@@ -5599,9 +5669,16 @@ def apply_custom_provider_tls_to_client_kwargs(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
+    *,
+    provider_identity: Optional[str] = None,
 ) -> None:
     """Attach per-provider TLS knobs to OpenAI client kwargs when matched."""
-    tls = get_custom_provider_tls_settings(base_url, custom_providers, config)
+    tls = get_custom_provider_tls_settings(
+        base_url,
+        custom_providers,
+        config,
+        provider_identity=provider_identity,
+    )
     if tls.get("ssl_ca_cert"):
         client_kwargs["ssl_ca_cert"] = tls["ssl_ca_cert"]
     if "ssl_verify" in tls:
@@ -5646,6 +5723,8 @@ def get_custom_provider_extra_headers(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
+    *,
+    provider_identity: Optional[str] = None,
 ) -> Dict[str, str]:
     """Return ``extra_headers`` from a matching ``providers`` / ``custom_providers`` entry.
 
@@ -5672,6 +5751,8 @@ def get_custom_provider_extra_headers(
         entry_url = normalize_route_base_url(entry.get("base_url"))
         if not entry_url or entry_url != target_url:
             continue
+        if not custom_provider_matches_identity(entry, provider_identity):
+            continue
         return render_versioned_headers(entry.get("extra_headers"))
     return {}
 
@@ -5681,6 +5762,8 @@ def apply_custom_provider_extra_headers_to_client_kwargs(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
+    *,
+    provider_identity: Optional[str] = None,
 ) -> None:
     """Merge per-provider ``extra_headers`` onto OpenAI client ``default_headers``.
 
@@ -5691,7 +5774,12 @@ def apply_custom_provider_extra_headers_to_client_kwargs(
 
     SECURITY: values may carry credentials — never log them.
     """
-    extra_headers = get_custom_provider_extra_headers(base_url, custom_providers, config)
+    extra_headers = get_custom_provider_extra_headers(
+        base_url,
+        custom_providers,
+        config,
+        provider_identity=provider_identity,
+    )
     if not extra_headers:
         return
     merged = dict(client_kwargs.get("default_headers") or {})
@@ -5704,6 +5792,8 @@ def get_custom_provider_context_length(
     base_url: str,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
     config: Optional[Dict[str, Any]] = None,
+    *,
+    provider_identity: Optional[str] = None,
 ) -> Optional[int]:
     """Look up a per-model ``context_length`` override from ``custom_providers``.
 
@@ -5745,6 +5835,8 @@ def get_custom_provider_context_length(
             continue
         entry_url = normalize_route_base_url(entry.get("base_url"))
         if not entry_url or entry_url != target_url:
+            continue
+        if not custom_provider_matches_identity(entry, provider_identity):
             continue
         models = entry.get("models")
         if not isinstance(models, dict):

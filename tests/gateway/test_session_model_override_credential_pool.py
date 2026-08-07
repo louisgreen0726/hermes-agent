@@ -12,7 +12,8 @@ def test_fast_session_override_includes_credential_pool(monkeypatch):
     runner._session_model_overrides = {
         "sess-1": {
             "model": "kimi-k2.7",
-            "provider": "custom:hyper",
+            "provider": "custom",
+            "requested_provider": "custom:hyper",
             "api_key": "sk-test",
             "base_url": "https://hyper.charm.land/v1",
             "api_mode": "chat_completions",
@@ -32,6 +33,8 @@ def test_fast_session_override_includes_credential_pool(monkeypatch):
     model, runtime = runner._resolve_session_agent_runtime(session_key="sess-1")
 
     assert model == "kimi-k2.7"
+    assert runtime["provider"] == "custom"
+    assert runtime["requested_provider"] == "custom:hyper"
     assert runtime.get("credential_pool") is fake_pool
 
 
@@ -41,7 +44,8 @@ def test_apply_session_override_backfills_credential_pool(monkeypatch):
     runner._session_model_overrides = {
         "sess-2": {
             "model": "kimi-k2.7",
-            "provider": "custom:hyper",
+            "provider": "custom",
+            "requested_provider": "custom:hyper",
             "api_key": "sk-test",
         },
     }
@@ -57,6 +61,8 @@ def test_apply_session_override_backfills_credential_pool(monkeypatch):
     )
 
     assert model == "kimi-k2.7"
+    assert runtime["provider"] == "custom"
+    assert runtime["requested_provider"] == "custom:hyper"
     assert runtime["credential_pool"] is fake_pool
 
 

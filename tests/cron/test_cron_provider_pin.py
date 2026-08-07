@@ -75,6 +75,48 @@ def _run_with_current_provider(job, current_provider, tmp_path):
     return success, output, final_response, error, agent_constructed
 
 
+def test_named_custom_runtime_reaches_cron_agent_intact(tmp_path):
+    pool = object()
+    request_overrides = {"extra_body": {"route": "relay-b"}}
+    fake_db = MagicMock()
+    job = _base_job(
+        provider="custom:relay-b",
+        model="shared-model",
+    )
+
+    with patch("cron.scheduler._hermes_home", tmp_path), \
+         patch("cron.scheduler._resolve_origin", return_value=None), \
+         patch("hermes_cli.env_loader.load_hermes_dotenv"), \
+         patch("hermes_cli.env_loader.reset_secret_source_cache"), \
+         patch("hermes_state.SessionDB", return_value=fake_db), \
+         patch(
+             "hermes_cli.runtime_provider.resolve_runtime_provider",
+             return_value={
+                 "api_key": "relay-b-key",
+                 "base_url": "https://relay.example/v1",
+                 "provider": "custom",
+                 "requested_provider": "custom:relay-b",
+                 "api_mode": "chat_completions",
+                 "credential_pool": pool,
+                 "request_overrides": request_overrides,
+             },
+         ), \
+         patch("run_agent.AIAgent") as mock_agent_cls:
+        mock_agent = MagicMock()
+        mock_agent.run_conversation.return_value = {"final_response": "ok"}
+        mock_agent_cls.return_value = mock_agent
+
+        success, _output, _final_response, error = run_job(job)
+
+    assert success is True
+    assert error is None
+    kwargs = mock_agent_cls.call_args.kwargs
+    assert kwargs["provider"] == "custom"
+    assert kwargs["requested_provider"] == "custom:relay-b"
+    assert kwargs["credential_pool"] is pool
+    assert kwargs["request_overrides"] == request_overrides
+
+
 class TestProviderDriftGuard:
     def test_a_unpinned_snapshot_matches_runs_normally(self, tmp_path):
         """(a) Unpinned job whose snapshot == current provider → runs normally."""

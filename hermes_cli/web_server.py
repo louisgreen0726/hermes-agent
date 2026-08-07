@@ -6595,11 +6595,13 @@ def get_model_info(profile: Optional[str] = None):
         if isinstance(model_cfg, dict):
             model_name = model_cfg.get("default", model_cfg.get("name", ""))
             provider = model_cfg.get("provider", "")
+            requested_provider = model_cfg.get("requested_provider") or provider
             base_url = model_cfg.get("base_url", "")
             config_ctx = model_cfg.get("context_length")
         else:
             model_name = str(model_cfg) if model_cfg else ""
             provider = ""
+            requested_provider = ""
             base_url = ""
             config_ctx = None
 
@@ -6610,12 +6612,46 @@ def get_model_info(profile: Optional[str] = None):
         # purely auto-detected value, then separately report the override)
         try:
             from agent.model_metadata import get_model_context_length
-            auto_ctx = get_model_context_length(
-                model=model_name,
-                base_url=base_url,
-                provider=provider,
-                config_context_length=None,  # ignore override — we want auto value
-            )
+            runtime_provider = str(provider or "").strip()
+            runtime_requested_provider = str(requested_provider or provider or "").strip()
+            runtime_base_url = str(base_url or "").strip()
+            runtime_api_key = ""
+            # Runtime resolution is profile-scoped because named custom keys,
+            # pools, and config all live under the selected HERMES_HOME.
+            with _profile_scope(profile):
+                if runtime_requested_provider:
+                    try:
+                        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+                        runtime = resolve_runtime_provider(
+                            requested=runtime_requested_provider,
+                            target_model=model_name,
+                        ) or {}
+                        runtime_provider = str(
+                            runtime.get("provider") or runtime_provider
+                        ).strip()
+                        runtime_requested_provider = str(
+                            runtime.get("requested_provider")
+                            or runtime_requested_provider
+                            or runtime_provider
+                        ).strip()
+                        runtime_base_url = str(
+                            runtime.get("base_url") or runtime_base_url
+                        ).strip()
+                        raw_api_key = runtime.get("api_key")
+                        runtime_api_key = (
+                            raw_api_key if isinstance(raw_api_key, str) else ""
+                        )
+                    except Exception:
+                        pass
+                auto_ctx = get_model_context_length(
+                    model=model_name,
+                    base_url=runtime_base_url,
+                    api_key=runtime_api_key,
+                    provider=runtime_provider,
+                    requested_provider=runtime_requested_provider or None,
+                    config_context_length=None,  # ignore override — we want auto value
+                )
         except Exception:
             auto_ctx = 0
 

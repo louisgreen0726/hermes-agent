@@ -8,6 +8,8 @@ provider/base_url/api_key empty in AIAgent, causing HTTP 404.
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_make_agent_passes_resolved_provider():
     """_make_agent forwards provider/base_url/api_key/api_mode from
@@ -58,6 +60,44 @@ def test_make_agent_passes_resolved_provider():
         assert call_kwargs.kwargs["base_url"] == "https://api.anthropic.com"
         assert call_kwargs.kwargs["api_key"] == "sk-test-key"
         assert call_kwargs.kwargs["api_mode"] == "anthropic_messages"
+
+
+def test_make_agent_preserves_named_custom_requested_identity():
+    """The resolved ``custom`` class must not erase the selected entry name."""
+    fake_runtime = {
+        "provider": "custom",
+        "requested_provider": "custom:relay-b",
+        "base_url": "https://shared.example/v1",
+        "api_key": "key-b",
+        "api_mode": "chat_completions",
+        "command": None,
+        "args": None,
+        "credential_pool": None,
+    }
+    fake_cfg = {
+        "model": {"default": "shared-model", "provider": "custom:relay-b"},
+        "agent": {"system_prompt": "test"},
+    }
+
+    with (
+        patch("tui_gateway.server._load_cfg", return_value=fake_cfg),
+        patch("tui_gateway.server._get_db", return_value=MagicMock()),
+        patch("tui_gateway.server._load_tool_progress_mode", return_value="compact"),
+        patch("tui_gateway.server._load_reasoning_config", return_value=None),
+        patch("tui_gateway.server._load_service_tier", return_value=None),
+        patch("tui_gateway.server._load_enabled_toolsets", return_value=None),
+        patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            return_value=fake_runtime,
+        ),
+        patch("run_agent.AIAgent") as mock_agent,
+    ):
+        from tui_gateway.server import _make_agent
+
+        _make_agent("sid-custom", "key-custom")
+
+    assert mock_agent.call_args.kwargs["provider"] == "custom"
+    assert mock_agent.call_args.kwargs["requested_provider"] == "custom:relay-b"
 
 
 def test_make_agent_forwards_provider_routing():
@@ -469,3 +509,36 @@ def test_apply_model_switch_does_not_leak_process_env():
     # Sibling session is completely untouched.
     assert sess_a["model_override"] is None
     assert sess_a["agent"].model == "minimax/m3"
+
+
+def test_apply_model_switch_keeps_named_provider_from_live_agent():
+    """A follow-up model value must resolve within the live named custom route."""
+    from tui_gateway import server
+
+    class _FailedResult:
+        success = False
+        error_message = "stop after capture"
+
+    class _FakeAgent:
+        model = "old-model"
+        provider = "custom"
+        requested_provider = "custom:relay-b"
+        base_url = "https://relay.example.test/v1"
+        api_key = "key-b"
+
+    session = {"agent": _FakeAgent(), "session_key": "k-B"}
+
+    with patch(
+        "hermes_cli.model_switch.switch_model", return_value=_FailedResult()
+    ) as mock_switch:
+        with pytest.raises(ValueError, match="stop after capture"):
+            server._apply_model_switch(
+                "sidB",
+                session,
+                "next-model",
+                parsed_flags=("next-model", None, False, False, True),
+                persist_override=False,
+            )
+
+    assert mock_switch.call_args.kwargs["current_provider"] == "custom:relay-b"
+    assert mock_switch.call_args.kwargs["current_api_key"] == "key-b"

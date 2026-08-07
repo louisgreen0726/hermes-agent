@@ -121,6 +121,60 @@ class TestCreateSession:
 
         assert state.agent.session_cwd == "/tmp/project"
 
+    def test_make_agent_preserves_named_custom_runtime_identity(self, monkeypatch):
+        captured = {}
+        pool = object()
+
+        class FakeAgent:
+            model = "shared-model"
+
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr("run_agent.AIAgent", FakeAgent)
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config",
+            lambda: {
+                "model": {
+                    "default": "shared-model",
+                    "provider": "custom:relay-a",
+                },
+                "mcp_servers": {},
+            },
+        )
+        monkeypatch.setattr(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            lambda requested=None: {
+                "provider": "custom",
+                "requested_provider": requested,
+                "api_mode": "chat_completions",
+                "base_url": "https://relay.example/v1",
+                "api_key": "relay-b-key",
+                "credential_pool": pool,
+                "request_overrides": {
+                    "extra_body": {"route": "relay-b"},
+                },
+            },
+        )
+        monkeypatch.setattr(
+            "acp_adapter.session._register_task_cwd",
+            lambda task_id, cwd: None,
+        )
+
+        SessionManager(db=None)._make_agent(
+            session_id="acp-named-custom",
+            cwd="/tmp/project",
+            model="shared-model",
+            requested_provider="custom:relay-b",
+        )
+
+        assert captured["provider"] == "custom"
+        assert captured["requested_provider"] == "custom:relay-b"
+        assert captured["credential_pool"] is pool
+        assert captured["request_overrides"] == {
+            "extra_body": {"route": "relay-b"}
+        }
+
 
 
 

@@ -3413,9 +3413,9 @@ def run_job(
             )
 
         fallback_model = get_fallback_chain(_cfg) or None
-        credential_pool = None
+        credential_pool = runtime.get("credential_pool")
         runtime_provider = str(runtime.get("provider") or "").strip().lower()
-        if runtime_provider:
+        if credential_pool is None and runtime_provider:
             try:
                 from agent.credential_pool import load_pool
                 pool = load_pool(runtime_provider)
@@ -3460,6 +3460,7 @@ def run_job(
             api_mode=runtime.get("api_mode"),
             acp_command=runtime.get("command"),
             acp_args=runtime.get("args"),
+            request_overrides=runtime.get("request_overrides"),
             max_iterations=max_iterations,
             reasoning_config=reasoning_config,
             prefill_messages=prefill_messages,

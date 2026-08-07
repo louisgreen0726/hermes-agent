@@ -5122,6 +5122,59 @@ class TestModelRoutesAgentCreation:
         assert captured["provider"] == "sessionprov"
         assert captured["api_key"] == "sk-session"
 
+    def test_named_custom_session_override_keeps_route_identity(self, monkeypatch):
+        """API-created agents must not reduce a named route to bare custom."""
+        captured = {}
+        resolved_providers = []
+
+        class FakeAgent:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        _patch_create_agent_runtime(monkeypatch, captured, FakeAgent)
+
+        def _resolve_named(provider, target_model=None):
+            resolved_providers.append((provider, target_model))
+            return {
+                "provider": "custom",
+                "requested_provider": "custom:relay-b",
+                "api_key": "key-b",
+                "base_url": "https://relay.example.test/v1",
+                "api_mode": "anthropic_messages",
+                "request_overrides": {
+                    "extra_body": {"tenant": "relay-b"},
+                },
+            }
+
+        monkeypatch.setattr(
+            "gateway.platforms.api_server._resolve_request_runtime_agent_kwargs",
+            _resolve_named,
+        )
+        adapter = _make_routing_adapter({})
+        monkeypatch.setattr(adapter, "_ensure_session_db", lambda: None)
+        monkeypatch.setattr(
+            adapter,
+            "_session_model_override_for",
+            lambda key: {
+                "model": "shared-model",
+                "provider": "custom",
+                "requested_provider": "custom:relay-b",
+                "api_key": "key-b",
+                "base_url": "https://relay.example.test/v1",
+                "api_mode": "anthropic_messages",
+            },
+        )
+
+        adapter._create_agent(session_id="s1")
+
+        assert resolved_providers == [("custom:relay-b", "shared-model")]
+        assert captured["provider"] == "custom"
+        assert captured["requested_provider"] == "custom:relay-b"
+        assert captured["api_key"] == "key-b"
+        assert captured["request_overrides"] == {
+            "extra_body": {"tenant": "relay-b"},
+        }
+
     def test_session_override_lookup_reads_gateway_runner(self, monkeypatch):
         """_session_model_override_for consults GatewayRunner._session_model_overrides."""
         adapter = _make_routing_adapter({})

@@ -7670,7 +7670,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
                 _reset_result = _switch_model(
                     raw_input=_config_model,
-                    current_provider=self.provider or "",
+                    current_provider=(
+                        self.requested_provider or self.provider or ""
+                    ),
                     current_model=self.model or "",
                     current_base_url=self.base_url or "",
                     current_api_key=self.api_key or "",
@@ -7678,17 +7680,26 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     explicit_provider=_config_provider or "",
                 )
                 if _reset_result.success:
+                    _reset_runtime_provider = (
+                        getattr(_reset_result, "runtime_provider", "")
+                        or _reset_result.target_provider
+                    )
+                    _reset_requested_provider = (
+                        getattr(_reset_result, "requested_provider", "")
+                        or _reset_result.target_provider
+                    )
                     if self.agent:
                         self.agent.switch_model(
                             new_model=_reset_result.new_model,
-                            new_provider=_reset_result.target_provider,
+                            new_provider=_reset_runtime_provider,
                             api_key=_reset_result.api_key,
                             base_url=_reset_result.base_url,
                             api_mode=_reset_result.api_mode,
+                            requested_provider=_reset_requested_provider,
                         )
                     self.model = _reset_result.new_model
-                    self.provider = _reset_result.target_provider
-                    self.requested_provider = _reset_result.target_provider
+                    self.provider = _reset_runtime_provider
+                    self.requested_provider = _reset_requested_provider
                     self._explicit_api_key = _reset_result.api_key
                     self._explicit_base_url = _reset_result.base_url
                     if _reset_result.api_key:
@@ -8464,6 +8475,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             "api_key": self.api_key,
             "base_url": self.base_url,
             "api_mode": self.api_mode,
+            "agent_request_overrides": copy.deepcopy(
+                getattr(agent, "request_overrides", {}) or {}
+            ) if agent is not None else {},
+            "agent_custom_provider_extra_body": copy.deepcopy(
+                getattr(agent, "_custom_provider_extra_body", {}) or {}
+            ) if agent is not None else {},
             "agent_primary_runtime": copy.deepcopy(
                 getattr(agent, "_primary_runtime", None)
             ) if agent is not None else None,
@@ -8490,6 +8507,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         if agent is None:
             return
 
+        def _restore_request_state() -> None:
+            agent.request_overrides = copy.deepcopy(
+                snapshot.get("agent_request_overrides") or {}
+            )
+            agent._custom_provider_extra_body = copy.deepcopy(
+                snapshot.get("agent_custom_provider_extra_body") or {}
+            )
+
         primary = snapshot.get("agent_primary_runtime")
         if primary and hasattr(agent, "_restore_primary_runtime"):
             try:
@@ -8497,6 +8522,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 agent._fallback_activated = True
                 agent._rate_limited_until = 0
                 if agent._restore_primary_runtime():
+                    _restore_request_state()
                     return
             except Exception:
                 logger.debug("CLI one-turn model restore via primary runtime failed", exc_info=True)
@@ -8509,7 +8535,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     api_key=snapshot.get("api_key", ""),
                     base_url=snapshot.get("base_url", ""),
                     api_mode=snapshot.get("api_mode", ""),
+                    requested_provider=snapshot.get("requested_provider") or None,
                 )
+                _restore_request_state()
             except Exception as exc:
                 logger.warning("CLI one-turn model restore failed: %s", exc)
 
@@ -8592,6 +8620,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 logger.debug("preflight-compression switch warning failed: %s", exc)
 
         old_model = self.model
+        runtime_provider = (
+            getattr(result, "runtime_provider", "") or result.target_provider
+        )
+        requested_provider = (
+            getattr(result, "requested_provider", "") or result.target_provider
+        )
         # Snapshot the CLI-level credential/runtime fields BEFORE mutating them
         # so a failed in-place agent swap can roll the whole CLI back to the old
         # working model.  Otherwise the broken credentials staged below leak into
@@ -8608,8 +8642,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             "api_mode": self.api_mode,
         }
         self.model = result.new_model
-        self.provider = result.target_provider
-        self.requested_provider = result.target_provider
+        self.provider = runtime_provider
+        self.requested_provider = requested_provider
         # Always overwrite explicit overrides so stale credentials from the
         # previous provider (e.g. Ollama api_key/base_url) don't leak into
         # the new provider's credential resolution on the next turn.
@@ -8626,10 +8660,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             try:
                 self.agent.switch_model(
                     new_model=result.new_model,
-                    new_provider=result.target_provider,
+                    new_provider=runtime_provider,
                     api_key=result.api_key,
                     base_url=result.base_url,
                     api_mode=result.api_mode,
+                    requested_provider=requested_provider,
                 )
             except Exception as exc:
                 # The agent rolled itself back to the old working model/client.
@@ -8666,9 +8701,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             from hermes_cli.model_switch import resolve_display_context_length
             ctx = resolve_display_context_length(
                 result.new_model,
-                result.target_provider,
+                result.runtime_provider or result.target_provider,
                 base_url=result.base_url or self.base_url or "",
                 api_key=result.api_key or self.api_key or "",
+                requested_provider=result.requested_provider or result.target_provider,
                 model_info=mi,
                 config_context_length=getattr(self.agent, "_config_context_length", None) if self.agent else None,
                 custom_providers=getattr(self.agent, "_custom_providers", None) if self.agent else None,
@@ -8755,7 +8791,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 chosen_model = model_list[selected]
                 result = switch_model(
                     raw_input=chosen_model,
-                    current_provider=self.provider or "",
+                    current_provider=(
+                        self.requested_provider or self.provider or ""
+                    ),
                     current_model=self.model or "",
                     current_base_url=self.base_url or "",
                     current_api_key=self.api_key or "",
@@ -8849,7 +8887,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         try:
             ctx = load_picker_context().with_overrides(
-                current_provider=self.provider or "",
+                current_provider=(
+                    self.requested_provider or self.provider or ""
+                ),
                 current_model=self.model or "",
                 current_base_url=self.base_url or "",
             )
@@ -8864,7 +8904,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # No args at all: open prompt_toolkit-native picker modal
         if not model_input and not explicit_provider:
             model_display = self.model or "unknown"
-            provider_display = get_label(self.provider) if self.provider else "unknown"
+            _display_provider = self.requested_provider or self.provider
+            provider_display = (
+                get_label(_display_provider) if _display_provider else "unknown"
+            )
 
             try:
                 if ctx is None:
@@ -8899,7 +8942,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # Perform the switch
         result = switch_model(
             raw_input=model_input,
-            current_provider=self.provider or "",
+            current_provider=(
+                self.requested_provider or self.provider or ""
+            ),
             current_model=self.model or "",
             current_base_url=self.base_url or "",
             current_api_key=self.api_key or "",
@@ -8938,6 +8983,12 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # Update requested_provider so _ensure_runtime_credentials() doesn't
         # overwrite the switch on the next turn (it re-resolves from this).
         old_model = self.model
+        runtime_provider = (
+            getattr(result, "runtime_provider", "") or result.target_provider
+        )
+        requested_provider = (
+            getattr(result, "requested_provider", "") or result.target_provider
+        )
         _one_turn_restore_snapshot = self._snapshot_model_runtime() if one_turn else None
         # Snapshot CLI-level fields before mutation so a failed in-place swap
         # rolls the whole CLI back to the old working model (#50163).
@@ -8952,8 +9003,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             "api_mode": self.api_mode,
         }
         self.model = result.new_model
-        self.provider = result.target_provider
-        self.requested_provider = result.target_provider
+        self.provider = runtime_provider
+        self.requested_provider = requested_provider
         # Always overwrite explicit overrides so stale credentials from the
         # previous provider (e.g. Ollama api_key/base_url) don't leak into
         # the new provider's credential resolution on the next turn.
@@ -8971,10 +9022,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             try:
                 self.agent.switch_model(
                     new_model=result.new_model,
-                    new_provider=result.target_provider,
+                    new_provider=runtime_provider,
                     api_key=result.api_key,
                     base_url=result.base_url,
                     api_mode=result.api_mode,
+                    requested_provider=requested_provider,
                 )
             except Exception as exc:
                 # Agent rolled itself back; roll the CLI back too and abort so a
@@ -9017,9 +9069,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         from hermes_cli.model_switch import resolve_display_context_length
         ctx = resolve_display_context_length(
             result.new_model,
-            result.target_provider,
+            result.runtime_provider or result.target_provider,
             base_url=result.base_url or self.base_url or "",
             api_key=result.api_key or self.api_key or "",
+            requested_provider=result.requested_provider or result.target_provider,
             model_info=mi,
             config_context_length=getattr(self.agent, "_config_context_length", None) if self.agent else None,
             custom_providers=getattr(self.agent, "_custom_providers", None) if self.agent else None,
@@ -12615,6 +12668,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 _ctx_len = get_model_context_length(
                     self.model, base_url=self.base_url or "", api_key=self.api_key or "",
                     provider=self.provider or "",
+                    custom_providers=getattr(self.agent, "_custom_providers", None),
+                    requested_provider=(self.requested_provider or "").strip() or None,
                     config_context_length=getattr(self.agent, "_config_context_length", None) if self.agent else None)
                 _ctx_result = preprocess_context_references(
                     message, cwd=os.getcwd(), context_length=_ctx_len)

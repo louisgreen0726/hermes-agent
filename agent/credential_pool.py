@@ -386,23 +386,34 @@ def _exhausted_until(entry: PooledCredential) -> Optional[float]:
 
 def _normalize_custom_pool_name(name: str) -> str:
     """Normalize a custom provider name for use as a pool key suffix."""
-    return name.strip().lower().replace(" ", "-")
+    normalized = name.strip().lower().replace(" ", "-")
+    while normalized.startswith(CUSTOM_POOL_PREFIX):
+        normalized = normalized[len(CUSTOM_POOL_PREFIX):]
+    return normalized
 
 
 def _iter_custom_providers(config: Optional[dict] = None):
-    """Yield (normalized_name, entry_dict) for each valid custom_providers entry."""
+    """Yield (canonical_pool_suffix, entry_dict) for each custom route.
+
+    ``providers:`` is the current keyed schema while ``custom_providers:`` is
+    the legacy list.  The compatibility helper knows how to normalize and
+    deduplicate both; using it even when the legacy list is present prevents a
+    modern sibling provider from disappearing merely because an older entry
+    was retained in the same config file.
+    """
     if config is None:
         config = _load_config_safe()
     if config is None:
         return
-    custom_providers = config.get("custom_providers")
-    if not isinstance(custom_providers, list):
-        # Fall back to the v12+ providers dict via the compatibility layer
-        try:
-            from hermes_cli.config import get_compatible_custom_providers
+    try:
+        from hermes_cli.config import get_compatible_custom_providers
 
-            custom_providers = get_compatible_custom_providers(config)
-        except Exception:
+        custom_providers = get_compatible_custom_providers(config)
+    except Exception:
+        # Keep the legacy path available if a partially installed runtime does
+        # not expose the compatibility helper yet.
+        custom_providers = config.get("custom_providers")
+        if not isinstance(custom_providers, list):
             return
     if not custom_providers:
         return
@@ -412,7 +423,11 @@ def _iter_custom_providers(config: Optional[dict] = None):
         name = entry.get("name")
         if not isinstance(name, str):
             continue
-        yield _normalize_custom_pool_name(name), entry
+        provider_key = str(entry.get("provider_key") or "").strip()
+        identity = provider_key or name
+        normalized_identity = _normalize_custom_pool_name(identity)
+        if normalized_identity:
+            yield normalized_identity, entry
 
 
 def _resolve_custom_provider_pool_identity(
@@ -426,14 +441,91 @@ def _resolve_custom_provider_pool_identity(
         return None
     requested_name = _normalize_custom_pool_name(requested_name)
 
-    for norm_name, entry in _iter_custom_providers():
-        runtime_ids = {norm_name}
-        provider_key = str(entry.get("provider_key") or "").strip()
-        if provider_key:
-            runtime_ids.add(_normalize_custom_pool_name(provider_key))
-        if requested_name in runtime_ids:
-            return f"{CUSTOM_POOL_PREFIX}{norm_name}", entry
+    entries = list(_iter_custom_providers())
+
+    # Mapping keys are the authoritative modern identity. Legacy list entries
+    # naturally use their normalized display name as the canonical suffix.
+    for canonical_name, entry in entries:
+        if requested_name == canonical_name:
+            if not entry.get("provider_key") and _legacy_custom_provider_name_count(
+                canonical_name
+            ) != 1:
+                return None
+            return f"{CUSTOM_POOL_PREFIX}{canonical_name}", entry
+
+    # Older callers and auth stores may still address a keyed provider by its
+    # display name. Accept that alias only when it identifies exactly one row;
+    # duplicate display names are intentionally ambiguous and fail closed.
+    display_matches = [
+        (canonical_name, entry)
+        for canonical_name, entry in entries
+        if _normalize_custom_pool_name(str(entry.get("name") or ""))
+        == requested_name
+    ]
+    if len(display_matches) == 1:
+        canonical_name, entry = display_matches[0]
+        return f"{CUSTOM_POOL_PREFIX}{canonical_name}", entry
     return None
+
+
+def _legacy_custom_provider_name_count(normalized_name: str) -> int:
+    """Count raw legacy rows owning one normalized display identity."""
+    config = _load_config_safe()
+    rows = config.get("custom_providers") if isinstance(config, dict) else None
+    if not isinstance(rows, list):
+        return 0
+    return sum(
+        1
+        for entry in rows
+        if isinstance(entry, dict)
+        and _normalize_custom_pool_name(str(entry.get("name") or ""))
+        == normalized_name
+    )
+
+
+def _legacy_custom_provider_pool_key(pool_key: str) -> Optional[str]:
+    """Return the unique pre-provider-key pool alias for a canonical pool."""
+    resolved = _resolve_custom_provider_pool_identity(pool_key)
+    if resolved is None or resolved[0] != pool_key:
+        return None
+    _canonical_pool, entry = resolved
+    display_name = _normalize_custom_pool_name(str(entry.get("name") or ""))
+    if not display_name:
+        return None
+    legacy_pool = f"{CUSTOM_POOL_PREFIX}{display_name}"
+    if legacy_pool == pool_key:
+        return None
+    # A display alias must never reuse another provider's modern canonical
+    # mapping key. Example: providers.foo plus providers.bar.name="foo". The
+    # old display-key store ``custom:foo`` belongs to the former now, so letting
+    # ``bar`` read it would cross credentials and selection strategy.
+    if any(
+        candidate == display_name
+        for candidate, _candidate_entry in _iter_custom_providers()
+    ):
+        return None
+    matches = [
+        candidate
+        for candidate, candidate_entry in _iter_custom_providers()
+        if _normalize_custom_pool_name(str(candidate_entry.get("name") or ""))
+        == display_name
+    ]
+    return legacy_pool if len(matches) == 1 else None
+
+
+def _custom_provider_identity_is_configured(provider_name: str) -> bool:
+    """Return True for a canonical or display identity, including ambiguity."""
+    requested = _normalize_custom_pool_name(provider_name)
+    if not requested:
+        return False
+    return any(
+        requested
+        in {
+            canonical_name,
+            _normalize_custom_pool_name(str(entry.get("name") or "")),
+        }
+        for canonical_name, entry in _iter_custom_providers()
+    )
 
 
 def get_custom_provider_pool_key(base_url: Optional[str], provider_name: Optional[str] = None) -> Optional[str]:
@@ -462,13 +554,20 @@ def get_custom_provider_pool_key(base_url: Optional[str], provider_name: Optiona
             if entry_url and entry_url == normalized_url:
                 return pool_key
             return None
+        if _custom_provider_identity_is_configured(provider_name):
+            # A configured-but-ambiguous display alias must never degrade to a
+            # URL-only first match. Unknown names retain legacy URL fallback.
+            return None
 
-    # Fall back to base_url matching (original behavior)
+    # Legacy callers may have only a URL. That is sufficient only when exactly
+    # one configured pool owns it; shared relays require a named identity and
+    # must fail closed instead of borrowing the first row's credential.
+    matches = set()
     for norm_name, entry in _iter_custom_providers():
         entry_url = str(entry.get("base_url") or "").strip().rstrip("/")
         if entry_url and entry_url == normalized_url:
-            return f"{CUSTOM_POOL_PREFIX}{norm_name}"
-    return None
+            matches.add(f"{CUSTOM_POOL_PREFIX}{norm_name}")
+    return next(iter(matches)) if len(matches) == 1 else None
 
 
 def list_custom_pool_providers() -> List[str]:
@@ -486,11 +585,8 @@ def _get_custom_provider_config(pool_key: str) -> Optional[Dict[str, Any]]:
     """Return the custom_providers config entry matching a pool key like 'custom:together.ai'."""
     if not pool_key.startswith(CUSTOM_POOL_PREFIX):
         return None
-    suffix = pool_key[len(CUSTOM_POOL_PREFIX):]
-    for norm_name, entry in _iter_custom_providers():
-        if norm_name == suffix:
-            return entry
-    return None
+    resolved = _resolve_custom_provider_pool_identity(pool_key)
+    return resolved[1] if resolved is not None else None
 
 
 def get_pool_strategy(provider: str) -> str:
@@ -504,6 +600,15 @@ def get_pool_strategy(provider: str) -> str:
         return STRATEGY_FILL_FIRST
 
     strategy = str(strategies.get(provider, "") or "").strip().lower()
+    if strategy not in SUPPORTED_POOL_STRATEGIES and provider.startswith(
+        CUSTOM_POOL_PREFIX
+    ):
+        # Keyed custom pools now use custom:<mapping-key>. Preserve a unique
+        # pre-migration custom:<display-name> strategy, but never borrow it when
+        # duplicate display names make the legacy identity ambiguous.
+        legacy_pool = _legacy_custom_provider_pool_key(provider)
+        if legacy_pool:
+            strategy = str(strategies.get(legacy_pool, "") or "").strip().lower()
     if strategy in SUPPORTED_POOL_STRATEGIES:
         return strategy
     return STRATEGY_FILL_FIRST
@@ -559,7 +664,11 @@ def credential_pool_matches_provider(
                 )
 
     if requested_pool is not None:
-        if requested_pool != pool_provider:
+        compatible_pools = {requested_pool}
+        legacy_pool = _legacy_custom_provider_pool_key(requested_pool)
+        if legacy_pool:
+            compatible_pools.add(legacy_pool)
+        if pool_provider not in compatible_pools:
             return False
         entry = requested_entry or _get_custom_provider_config(requested_pool)
         configured_url = (
@@ -2764,6 +2873,9 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
         model_cfg = config.get("model") if config else None
         if isinstance(model_cfg, dict):
             model_provider = str(model_cfg.get("provider") or "").strip().lower()
+            model_requested_provider = str(
+                model_cfg.get("requested_provider") or model_provider
+            ).strip().lower()
             model_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
             model_api_key = ""
             for k in ("api_key", "api"):
@@ -2771,9 +2883,23 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
                 if isinstance(v, str) and v.strip():
                     model_api_key = v.strip()
                     break
-            if model_provider == "custom" and model_base_url and model_api_key:
-                # Check if this model's base_url matches our custom provider
-                matched_key = get_custom_provider_pool_key(model_base_url)
+            if (
+                (model_provider == "custom" or model_provider.startswith("custom:"))
+                and model_base_url
+                and model_api_key
+            ):
+                # A named identity is authoritative when sibling providers
+                # share one relay. URL-only lookup would always seed the first
+                # pool with whichever key happens to be in model config.
+                provider_identity = (
+                    model_requested_provider
+                    if model_requested_provider not in {"", "auto", "custom"}
+                    else None
+                )
+                matched_key = get_custom_provider_pool_key(
+                    model_base_url,
+                    provider_name=provider_identity,
+                )
                 if matched_key == pool_key:
                     source = "model_config"
                     if not _is_suppressed(pool_key, source):
@@ -2799,6 +2925,14 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
 def load_pool(provider: str) -> CredentialPool:
     provider = (provider or "").strip().lower()
     raw_entries = read_credential_pool(provider)
+    # Provider-key pool identities replaced the old display-name identity.
+    # Read a unique legacy alias when the canonical store has no rows; keep the
+    # returned CredentialPool canonical so the first later write migrates state
+    # forward instead of perpetuating the alias.
+    if not raw_entries and provider.startswith(CUSTOM_POOL_PREFIX):
+        legacy_pool = _legacy_custom_provider_pool_key(provider)
+        if legacy_pool:
+            raw_entries = read_credential_pool(legacy_pool)
     disk_ids = {
         entry.get("id")
         for entry in raw_entries

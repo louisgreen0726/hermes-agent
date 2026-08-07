@@ -97,3 +97,55 @@ def test_identity_resolves_back_through_named_lookup(monkeypatch):
     assert entry is not None
     assert entry["base_url"] == "https://api.mimo.example/v1"
     assert entry["api_key"] == "sk-entry"
+
+
+def test_shared_url_is_ambiguous_instead_of_selecting_first_provider(monkeypatch):
+    relay_url = "https://relay.example.test/v1"
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "relay-a": {
+                    "api": relay_url,
+                    "api_key": "key-a",
+                    "models": ["shared-model"],
+                },
+                "relay-b": {
+                    "api": relay_url,
+                    "api_key": "key-b",
+                    "models": ["relay-b-only"],
+                },
+            }
+        },
+    )
+
+    assert rp.find_custom_provider_identity(relay_url) is None
+    assert rp.find_custom_provider_identity_by_model("shared-model") == "custom:relay-a"
+    # An ambiguous URL must not prevent the unique model tier from recovering
+    # the legacy session's actual route.
+    assert (
+        rp.canonical_custom_identity(base_url=relay_url, model="relay-b-only")
+        == "custom:relay-b"
+    )
+
+
+def test_shared_model_is_ambiguous_instead_of_selecting_first_provider(monkeypatch):
+    monkeypatch.setattr(
+        rp,
+        "load_config",
+        lambda: {
+            "providers": {
+                "relay-a": {
+                    "api": "https://a.example.test/v1",
+                    "models": ["shared-model"],
+                },
+                "relay-b": {
+                    "api": "https://b.example.test/v1",
+                    "models": ["shared-model"],
+                },
+            }
+        },
+    )
+
+    assert rp.find_custom_provider_identity_by_model("shared-model") is None

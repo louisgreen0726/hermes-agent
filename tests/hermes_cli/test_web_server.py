@@ -7475,6 +7475,48 @@ class TestModelInfoEndpoint:
         assert data["config_context_length"] == 0
         assert data["effective_context_length"] == 200000  # auto wins
 
+    def test_model_info_scopes_named_custom_context_lookup(self, monkeypatch):
+        import hermes_cli.web_server as ws
+
+        monkeypatch.setattr(
+            ws,
+            "load_config",
+            lambda: {
+                "model": {
+                    "default": "shared-model",
+                    "provider": "custom:relay-b",
+                    "base_url": "https://relay.example.test/v1",
+                }
+            },
+        )
+        runtime = {
+            "provider": "custom",
+            "requested_provider": "custom:relay-b",
+            "base_url": "https://relay.example.test/v1",
+            "api_key": "key-b",
+        }
+
+        with patch(
+            "hermes_cli.runtime_provider.resolve_runtime_provider",
+            return_value=runtime,
+        ) as resolve_runtime, patch(
+            "agent.model_metadata.get_model_context_length",
+            return_value=96000,
+        ) as get_context:
+            resp = self.client.get("/api/model/info")
+
+        assert resp.status_code == 200
+        assert resp.json()["auto_context_length"] == 96000
+        resolve_runtime.assert_called_once_with(
+            requested="custom:relay-b", target_model="shared-model"
+        )
+        assert get_context.call_args.kwargs["provider"] == "custom"
+        assert (
+            get_context.call_args.kwargs["requested_provider"]
+            == "custom:relay-b"
+        )
+        assert get_context.call_args.kwargs["api_key"] == "key-b"
+
     def test_model_info_empty_model(self, monkeypatch):
         import hermes_cli.web_server as ws
 

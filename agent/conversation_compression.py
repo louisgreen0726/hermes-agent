@@ -739,9 +739,10 @@ def check_compression_model_feasibility(agent: Any) -> None:
             _aux_cfg_provider, _, _, _, _ = _resolve_task_provider_model("compression")
         except Exception:
             _aux_cfg_provider = ""
+        main_runtime = agent._current_main_runtime()
         client, aux_model = get_text_auxiliary_client(
             "compression",
-            main_runtime=agent._current_main_runtime(),
+            main_runtime=main_runtime,
         )
         if client is None or not aux_model:
             fb_client, fb_model, fb_label = _try_configured_fallback_for_unavailable_client(
@@ -785,6 +786,39 @@ def check_compression_model_feasibility(agent: Any) -> None:
         # than minting a bearer JWT just to look up a context length.
         _raw_aux_key = getattr(client, "api_key", "")
         aux_api_key = "" if (callable(_raw_aux_key) and not isinstance(_raw_aux_key, str)) else str(_raw_aux_key or "")
+        aux_provider = (
+            _aux_cfg_provider
+            if _aux_cfg_provider and _aux_cfg_provider != "auto"
+            else getattr(agent, "provider", "")
+        )
+        aux_identity = str(
+            getattr(client, "_hermes_provider_identity", "") or ""
+        ).strip() or None
+        if not aux_identity and isinstance(main_runtime, dict):
+            main_is_same_route = (
+                str(main_runtime.get("base_url") or "").rstrip("/")
+                == aux_base_url.rstrip("/")
+            )
+            main_provider = str(main_runtime.get("provider") or "").strip().casefold()
+            if main_is_same_route and (
+                main_provider == "custom" or main_provider.startswith("custom:")
+            ):
+                aux_identity = str(
+                    main_runtime.get("requested_provider") or ""
+                ).strip() or None
+        aux_provider_norm = str(aux_provider or "").strip().casefold()
+        if aux_provider_norm.startswith("custom:"):
+            aux_identity = aux_identity or str(aux_provider).strip()
+            aux_provider = "custom"
+        elif aux_provider_norm not in {"", "auto", "custom"}:
+            try:
+                from hermes_cli.runtime_provider import has_named_custom_provider
+
+                if has_named_custom_provider(str(aux_provider)):
+                    aux_identity = aux_identity or str(aux_provider).strip()
+                    aux_provider = "custom"
+            except Exception:
+                pass
 
         aux_context = get_model_context_length(
             aux_model,
@@ -794,7 +828,8 @@ def check_compression_model_feasibility(agent: Any) -> None:
             # Each model must be resolved with its own provider so that
             # provider-specific paths (e.g. Bedrock static table, OpenRouter API)
             # are invoked for the correct client, not inherited from the main model.
-            provider=(_aux_cfg_provider if _aux_cfg_provider and _aux_cfg_provider != "auto" else getattr(agent, "provider", "")),
+            provider=aux_provider,
+            requested_provider=aux_identity,
             custom_providers=agent._custom_providers,
         )
 

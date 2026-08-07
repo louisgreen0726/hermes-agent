@@ -174,10 +174,12 @@ _RUNTIME_AGENT_OVERRIDE_KEYS = (
     "api_key",
     "base_url",
     "provider",
+    "requested_provider",
     "api_mode",
     "command",
     "args",
     "credential_pool",
+    "request_overrides",
     "max_tokens",
 )
 
@@ -285,10 +287,12 @@ def _resolve_request_runtime_agent_kwargs(provider: str, target_model: Optional[
         "api_key": runtime.get("api_key"),
         "base_url": runtime.get("base_url"),
         "provider": runtime.get("provider"),
+        "requested_provider": runtime.get("requested_provider") or provider,
         "api_mode": runtime.get("api_mode"),
         "command": runtime.get("command"),
         "args": list(runtime.get("args") or []),
         "credential_pool": runtime.get("credential_pool"),
+        "request_overrides": runtime.get("request_overrides"),
         "max_tokens": max_tokens,
     }
 
@@ -2442,7 +2446,9 @@ class APIServerAdapter(BasePlatformAdapter):
             session_override = self._session_model_override_for(session_key)
         if session_override:
             override_model = _clean_request_string(session_override.get("model")) or model
-            session_provider = _clean_request_string(session_override.get("provider"))
+            session_provider = _clean_request_string(
+                session_override.get("requested_provider")
+            ) or _clean_request_string(session_override.get("provider"))
             current_provider = _clean_request_string(runtime_kwargs.get("provider"))
             provider_runtime = _resolve_provider_runtime(
                 session_provider or current_provider,

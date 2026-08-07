@@ -25,6 +25,7 @@ def _make_agent_openrouter():
     agent = AIAgent.__new__(AIAgent)
 
     agent.provider = "openrouter"
+    agent.requested_provider = "custom:relay-a"
     agent.model = "x-ai/grok-4"
     agent.base_url = "https://openrouter.ai/api/v1"
     agent.api_key = "or-key-original"
@@ -46,6 +47,11 @@ def _make_agent_openrouter():
     agent._fallback_chain = []
     agent._fallback_model = None
     agent._config_context_length = None
+    agent.request_overrides = {
+        "temperature": 0.1,
+        "extra_body": {"tenant": "relay-a", "caller": True},
+    }
+    agent._custom_provider_extra_body = {"tenant": "relay-a"}
 
     return agent
 
@@ -83,6 +89,10 @@ def test_openai_client_rebuild_failure_rolls_back_to_original_state():
 
     original_client = agent.client
     original_kwargs = dict(agent._client_kwargs)
+    original_request_overrides = {
+        "temperature": 0.1,
+        "extra_body": {"tenant": "relay-a", "caller": True},
+    }
 
     # _create_openai_client raises mid-swap (simulates bad key / network error)
     def boom(*_a, **_kw):
@@ -108,6 +118,9 @@ def test_openai_client_rebuild_failure_rolls_back_to_original_state():
     assert agent.api_key == "or-key-original"
     assert agent.client is original_client
     assert agent._client_kwargs == original_kwargs
+    assert agent.requested_provider == "custom:relay-a"
+    assert agent.request_overrides == original_request_overrides
+    assert agent._custom_provider_extra_body == {"tenant": "relay-a"}
 
 
 def test_anthropic_client_rebuild_failure_rolls_back_to_original_state():
