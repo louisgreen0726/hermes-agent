@@ -1342,6 +1342,26 @@ def profile_env(tmp_path, monkeypatch):
 
 ## Testing
 
+### Protected-update release gate
+
+`scripts/louis-release-tests.txt` is a bounded safety gate for the Louis
+protected-update transaction. Keep it focused on update command dispatch and
+progress reporting, Louis distribution identity, the protected updater,
+managed-install behavior, update checks, and project/package release metadata.
+The candidate owns this manifest, and `scripts/hermes-update-louis` runs it
+both before and after installing candidate dependencies because those stages
+validate different runtime states.
+
+Do not append ordinary product regressions to this manifest. Telegram, model
+providers, TTS, backup, tools, UI, and other feature tests belong in normal CI
+and in the focused validation for changes to those areas. Add a test file to
+the release gate only when its failure could let the updater select the wrong
+source, accept an invalid candidate, damage a managed installation, lose
+update status, or publish inconsistent release metadata. Review and remove
+entries when they no longer protect one of those contracts. Do not enforce a
+fixed manifest length or test count; those are change-detector tests, not
+behavioral guarantees.
+
 ### Python
 **ALWAYS use `scripts/run_tests.sh`** — do not call `pytest` directly. The script enforces
 hermetic environment parity with CI (unset credential vars, TZ=UTC, LANG=C.UTF-8,

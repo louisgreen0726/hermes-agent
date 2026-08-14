@@ -7,9 +7,9 @@ independently maintained derivative of Hermes Agent.
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.20.0.3`
-- Python package version: `0.20.0+Louis.3`
-- Desktop package version: `0.20.0-louis.3`
+- User-facing version: `Louis-0.20.0.4`
+- Python package version: `0.20.0+Louis.4`
+- Desktop package version: `0.20.0-louis.4`
 - Selectively integrated upstream baseline: Hermes Agent `0.20.0`
   (`2026.8.3`)
 - Source project: `https://github.com/NousResearch/hermes-agent`
@@ -22,7 +22,7 @@ source. It is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.20.0.3` (released 2026-08-07).
+- The versioned baseline is `Louis-0.20.0.4` (released 2026-08-14).
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -40,10 +40,10 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.20.0.3 baseline carries:
+The versioned 0.20.0.4 baseline carries:
 
-- Telegram Native Guest Mode.
-- Native Rich Markdown table delivery in Telegram Guest Mode.
+- Telegram Native Guest Mode with MarkdownV2 rendering for ordinary Markdown
+  and Bot API 10.1 rich delivery for tables and other advanced structures.
 - CJK Rich Message delivery for ordinary replies.
 - Rich table consistency for cron and standalone sends.
 - Regression coverage for Telegram routing, authorization, rich delivery, threads, proxy mode, and delivery ledger behavior.
@@ -59,7 +59,7 @@ The versioned 0.20.0.3 baseline carries:
 - Complete same-relay isolation for named custom providers across model lists,
   context metadata, disk caches, credentials, headers, request options, model
   switching, fallback, and session restoration.
-- Candidate-owned protected-update test gates, strict manifest validation,
+- A bounded candidate-owned protected-update gate, strict manifest validation,
   non-network runtime smoke checks, and restoration of previously running
   Gateway and Dashboard services before a release is accepted as healthy.
 - Version-aware custom `User-Agent` headers and synchronized Python, CLI, and
@@ -136,7 +136,21 @@ and ambiguous groups, and creates a mode-`0600` backup before any write.
 
 ## Updating
 
-Production machines use `hermes-update-louis`. The updater validates `origin/main` in an isolated worktree, loads the regression manifest from that candidate, runs the suite, updates dependencies, verifies the candidate again, activates the validated commit, and restarts any previously running Gateway and Dashboard services only after integrity checks pass. Candidate manifest entries are restricted to existing test files inside the candidate worktree.
+Production machines use `hermes-update-louis`. The updater validates
+`origin/main` in an isolated worktree, loads the protected-update manifest from
+that candidate, runs the gate, updates dependencies, verifies the candidate
+again, activates the validated commit, and restarts any previously running
+Gateway and Dashboard services only after integrity checks pass. Candidate
+manifest entries are restricted to existing test files inside the candidate
+worktree.
+
+That manifest is deliberately bounded to the update transaction: command and
+progress delivery, Louis distribution identity, updater and managed-install
+behavior, update availability, and release metadata. Feature regressions stay
+in normal CI and are run as focused validation for the code they cover; they
+must not accumulate in the protected-update gate. The gate still runs before
+and after candidate dependency installation because those checks cover
+different runtime states.
 
 Before a newly activated release is accepted, the updater verifies the editable
 source, imports both the CLI and Gateway runtime, and checks the Louis version
@@ -164,6 +178,7 @@ edit, but the impact review is still mandatory. The detailed checklist lives in
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.20.0.4](docs/releases/LOUIS_0.20.0.4.md)
 - [Louis Hermes Agent 0.20.0.3](docs/releases/LOUIS_0.20.0.3.md)
 - [Louis Hermes Agent 0.20.0.2](docs/releases/LOUIS_0.20.0.2.md)
 - [Louis Hermes Agent 0.20.0.1](docs/releases/LOUIS_0.20.0.1.md)

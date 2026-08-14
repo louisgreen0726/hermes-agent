@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.3-2563eb" alt="Stable release: Louis-0.20.0.3"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.4-2563eb" alt="Stable release: Louis-0.20.0.4"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT License"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis project issues"></a>
 </p>
@@ -69,10 +69,10 @@ official Nous Research release.
 | --- | --- |
 | Maintenance | Active, independently maintained |
 | Production branch | `main` |
-| Stable baseline | [`Louis-0.20.0.3`](docs/releases/LOUIS_0.20.0.3.md) |
-| Python package version | `0.20.0+Louis.3` |
+| Stable baseline | [`Louis-0.20.0.4`](docs/releases/LOUIS_0.20.0.4.md) |
+| Python package version | `0.20.0+Louis.4` |
 | Selective upstream baseline | Hermes Agent `0.20.0` / `2026.8.3` |
-| Current `main` | `Louis-0.20.0.3` stable baseline |
+| Current `main` | `Louis-0.20.0.4` stable baseline |
 | Upstream relationship | Selective review and backporting only |
 | Automatic updates | Louis `origin/main` only |
 

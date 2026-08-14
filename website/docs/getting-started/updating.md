@@ -134,6 +134,22 @@ Already up to date.  (or: Updating abc1234..def5678)
 If `git status --short` shows unexpected changes after `hermes update`, stop and inspect them before continuing. This usually means local modifications were reapplied on top of the updated code, or a dependency step refreshed lockfiles.
 :::
 
+### Louis managed production updates
+
+Managed Louis production installations can use `hermes-update-louis`. It
+validates the candidate from Louis `origin/main` in an isolated worktree,
+checks it before and after candidate dependency installation, activates only a
+fast-forward commit, and restores Gateway and Dashboard services that were
+running before activation.
+
+The candidate-owned release manifest is intentionally limited to contracts
+that can make an update unsafe: update command and progress delivery,
+distribution identity, protected-updater and managed-install behavior, update
+checks, and release metadata. Ordinary feature regressions remain in normal CI
+and in each change's focused validation. This keeps production updates bounded
+without weakening Telegram, provider, TTS, backup, UI, or other feature test
+coverage.
+
 ### If your terminal disconnects mid-update
 
 `hermes update` protects itself against accidental terminal loss:
