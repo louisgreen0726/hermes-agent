@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gateway.config import PlatformConfig
-from gateway.platforms.base import MessageType, _thread_metadata_for_source
+from gateway.platforms.base import (
+    MessageType,
+    _thread_metadata_for_source,
+    utf16_len,
+)
 from plugins.platforms.telegram.adapter import TelegramAdapter
 
 
@@ -158,7 +162,7 @@ def test_guest_query_route_and_authorization_are_removed_from_live_source_cache(
 
 
 @pytest.mark.asyncio
-async def test_guest_reply_uses_answer_guest_query_instead_of_send_message():
+async def test_plain_guest_reply_uses_renderable_text_content_once():
     adapter = _make_adapter()
     adapter._bot.send_message = AsyncMock()
 
@@ -177,17 +181,62 @@ async def test_guest_reply_uses_answer_guest_query_instead_of_send_message():
     assert call.kwargs["api_kwargs"]["guest_query_id"] == "guest-query-1"
     guest_result = call.kwargs["api_kwargs"]["result"]
     assert guest_result["type"] == "article"
-    assert guest_result["input_message_content"]["message_text"]
+    assert guest_result["input_message_content"] == {
+        "message_text": "Guest reply",
+        "parse_mode": "MarkdownV2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_guest_reply_converts_ordinary_markdown_to_markdown_v2():
+    adapter = _make_adapter()
+    markdown = (
+        "**粗体**\n\n"
+        "*斜体*\n\n"
+        "~~删除线~~\n\n"
+        "- 列表项\n"
+        "1. 有序项\n\n"
+        "[链接](https://example.com)\n\n"
+        "`inline code`\n\n"
+        "```python\n"
+        'print("hi")\n'
+        "```\n\n"
+        "> 引用"
+    )
+
+    result = await adapter.send(
+        "-100123",
+        markdown,
+        metadata={"telegram_guest_query_id": "guest-query-1", "notify": True},
+    )
+
+    assert result.success is True
+    adapter._bot.do_api_request.assert_awaited_once()
+    guest_result = adapter._bot.do_api_request.await_args.kwargs["api_kwargs"]["result"]
+    input_content = guest_result["input_message_content"]
+    assert input_content == {
+        "message_text": (
+            "*粗体*\n\n"
+            "_斜体_\n\n"
+            "~删除线~\n\n"
+            "\\- 列表项\n"
+            "1\\. 有序项\n\n"
+            "[链接](https://example.com)\n\n"
+            "`inline code`\n\n"
+            "```python\n"
+            'print("hi")\n'
+            "```\n\n"
+            "> 引用"
+        ),
+        "parse_mode": "MarkdownV2",
+    }
+    assert input_content["message_text"] != markdown
 
 
 @pytest.mark.asyncio
 async def test_guest_reply_uses_rich_message_content_for_markdown_table():
     adapter = _make_adapter(rich_messages=True)
-    table = (
-        "| 模型 | IQ |\n"
-        "|---|---:|\n"
-        "| Sol | 92 |"
-    )
+    table = "| A | B |\n|---|---|\n| 1 | 2 |"
 
     result = await adapter.send(
         "-100123",
@@ -216,6 +265,7 @@ def test_allowed_updates_include_native_guest_messages():
 async def test_guest_reply_failure_is_not_retried_or_plaintext_resent():
     adapter = _make_adapter()
     adapter._bot.do_api_request = AsyncMock(side_effect=RuntimeError("expired query"))
+    adapter._bot.send_message = AsyncMock()
 
     result = await adapter._send_with_retry(
         "-100123",
@@ -225,15 +275,17 @@ async def test_guest_reply_failure_is_not_retried_or_plaintext_resent():
 
     assert result.success is False
     assert adapter._bot.do_api_request.await_count == 1
+    adapter._bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_guest_reply_truncates_as_one_message_without_chunk_suffix():
     adapter = _make_adapter()
+    content = "😀" * 2047 + "x" * 1000
 
     result = await adapter.send(
         "-100123",
-        "x" * 5000,
+        content,
         metadata={"telegram_guest_query_id": "guest-query-1"},
     )
 
@@ -242,7 +294,9 @@ async def test_guest_reply_truncates_as_one_message_without_chunk_suffix():
     message_text = payload["result"]["input_message_content"]["message_text"]
     assert message_text.endswith("…")
     assert "(1/" not in message_text
-    assert len(message_text) == adapter.MAX_MESSAGE_LENGTH
+    assert message_text == "😀" * 2047 + "x…"
+    assert utf16_len(message_text) == adapter.MAX_MESSAGE_LENGTH
+    assert payload["result"]["input_message_content"]["parse_mode"] == "MarkdownV2"
 
 
 def test_guest_compat_parser_accepts_raw_ptb_api_kwargs_shape():

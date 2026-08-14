@@ -1019,16 +1019,20 @@ class TelegramAdapter(BasePlatformAdapter):
                 "rich_message": self._rich_message_payload(plain_text)
             }
         else:
-            input_message_content = {"message_text": ""}
-
-        if utf16_len(plain_text) > self.MAX_MESSAGE_LENGTH:
-            message_text = _prefix_within_utf16_limit(
-                plain_text, self.MAX_MESSAGE_LENGTH - 1
-            ) + "…"
-        else:
-            message_text = plain_text
-        if not rich_guest_reply:
-            input_message_content["message_text"] = message_text
+            # InputTextMessageContent supports parse_mode for guest-query
+            # results. Truncate before formatting so an incomplete markdown
+            # construct at the cut is escaped as literal text instead of
+            # producing a malformed one-shot MarkdownV2 request.
+            if utf16_len(plain_text) > self.MAX_MESSAGE_LENGTH:
+                message_text = _prefix_within_utf16_limit(
+                    plain_text, self.MAX_MESSAGE_LENGTH - 1
+                ) + "…"
+            else:
+                message_text = plain_text
+            input_message_content = {
+                "message_text": self.format_message(message_text),
+                "parse_mode": "MarkdownV2",
+            }
         result_payload = {
             "type": "article",
             "id": uuid.uuid4().hex,
