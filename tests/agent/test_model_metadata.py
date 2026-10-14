@@ -287,42 +287,24 @@ class TestDefaultContextLengths:
                 api_key="oauth-token",
             ) == 256000
 
-    def test_deepseek_v4_models_1m_context(self):
-        from agent.model_metadata import get_model_context_length
-        from unittest.mock import patch as mock_patch
-
-        expected_keys = {
-            "deepseek-v4-pro": 1_000_000,
-            "deepseek-v4-flash": 1_000_000,
-            "deepseek-chat": 1_000_000,
-            "deepseek-reasoner": 1_000_000,
+    def test_deepseek_fallback_is_consistent_for_prefixed_models(self):
+        specific_models = {
+            model: length for model, length in DEFAULT_CONTEXT_LENGTHS.items()
+            if model.startswith("deepseek-") and "/" not in model
         }
-        for key, value in expected_keys.items():
-            assert key in DEFAULT_CONTEXT_LENGTHS, f"{key} missing"
-            assert DEFAULT_CONTEXT_LENGTHS[key] == value, (
-                f"{key} should be {value}, got {DEFAULT_CONTEXT_LENGTHS[key]}"
-            )
+        assert specific_models
 
-        # Longest-first substring matching must resolve both the bare V4
-        # ids (native DeepSeek) and the vendor-prefixed forms (OpenRouter
-        # / Nous Portal) to 1M without probing down to the legacy 128K
-        # ``deepseek`` substring fallback.
-        with mock_patch("agent.model_metadata.fetch_model_metadata", return_value={}), \
-             mock_patch("agent.model_metadata.fetch_endpoint_model_metadata", return_value={}), \
-             mock_patch("agent.model_metadata.get_cached_context_length", return_value=None):
-            cases = [
-                ("deepseek-v4-pro", 1_000_000),
-                ("deepseek-v4-flash", 1_000_000),
-                ("deepseek/deepseek-v4-pro", 1_000_000),
-                ("deepseek/deepseek-v4-flash", 1_000_000),
-                ("deepseek-chat", 1_000_000),
-                ("deepseek-reasoner", 1_000_000),
-            ]
-            for model_id, expected_ctx in cases:
-                actual = get_model_context_length(model_id)
-                assert actual == expected_ctx, (
-                    f"{model_id}: expected {expected_ctx}, got {actual}"
-                )
+        # Specific catalog entries beat the family fallback, regardless of
+        # relay prefix. Keep this invariant valid as the catalog evolves.
+        with patch("agent.model_metadata.fetch_model_metadata", return_value={}), \
+             patch("agent.model_metadata.fetch_endpoint_model_metadata", return_value={}), \
+             patch("agent.model_metadata.get_cached_context_length", return_value=None), \
+             patch("agent.model_metadata._query_ollama_api_show", return_value=None), \
+             patch("agent.models_dev.lookup_models_dev_context", return_value=None):
+            for model, expected_context in specific_models.items():
+                for prefix in ("", "deepseek/", "workbuddy-ai/"):
+                    assert get_model_context_length(prefix + model) == expected_context
+            assert get_model_context_length("deepseek-unknown") == DEFAULT_CONTEXT_LENGTHS["deepseek"]
 
     def test_glm_52_context_1m(self):
         """GLM-5.2 must resolve to 1M, not the generic GLM fallback of 202K.

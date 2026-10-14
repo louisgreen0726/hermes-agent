@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.4-2563eb" alt="稳定版本：Louis-0.20.0.4"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.5-2563eb" alt="稳定版本：Louis-0.20.0.5"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT 许可证"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis 项目问题反馈"></a>
 </p>
@@ -62,15 +62,17 @@ Nous Research 引用用于说明代码来源或上游服务，不表示本独立
 | --- | --- |
 | 维护状态 | 活跃，独立维护 |
 | 生产分支 | `main` |
-| 稳定基线 | [`Louis-0.20.0.4`](docs/releases/LOUIS_0.20.0.4.md) |
-| Python 包版本 | `0.20.0+Louis.4` |
+| 稳定基线 | [`Louis-0.20.0.5`](docs/releases/LOUIS_0.20.0.5.md) |
+| Python 包版本 | `0.20.0+Louis.5` |
 | 选择性上游基线 | Hermes Agent `0.20.0` / `2026.8.3` |
-| 当前 `main` | `Louis-0.20.0.4` 稳定基线 |
+| 当前 `main` | `Louis-0.20.0.5` 稳定基线 |
 | 与上游的关系 | 仅选择性评估和回迁 |
 | 自动更新来源 | 仅 Louis `origin/main` |
 
 多个具名自定义服务商可以共用同一个中转 URL，同时保持各自独立的模型列表、缓存、
 API Key、API 模式、请求头、请求选项和凭据池；模型切换与会话恢复也会保留该身份。
+自定义端点目录可正确处理 modalities 等字段中的列表或映射；Gateway 也会在具名
+自定义服务商被运行时归一化后保留匹配的上下文固定值。
 
 版本历史和待发布内容记录在
 [`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) 与

@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.4-2563eb" alt="Stable release: Louis-0.20.0.4"></a>
+  <a href="https://github.com/louisgreen0726/hermes-agent/releases"><img src="https://img.shields.io/badge/stable-Louis--0.20.0.5-2563eb" alt="Stable release: Louis-0.20.0.5"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT License"></a>
   <a href="https://github.com/louisgreen0726/hermes-agent/issues"><img src="https://img.shields.io/badge/issues-Louis%20project-7c3aed" alt="Louis project issues"></a>
 </p>
@@ -69,16 +69,18 @@ official Nous Research release.
 | --- | --- |
 | Maintenance | Active, independently maintained |
 | Production branch | `main` |
-| Stable baseline | [`Louis-0.20.0.4`](docs/releases/LOUIS_0.20.0.4.md) |
-| Python package version | `0.20.0+Louis.4` |
+| Stable baseline | [`Louis-0.20.0.5`](docs/releases/LOUIS_0.20.0.5.md) |
+| Python package version | `0.20.0+Louis.5` |
 | Selective upstream baseline | Hermes Agent `0.20.0` / `2026.8.3` |
-| Current `main` | `Louis-0.20.0.4` stable baseline |
+| Current `main` | `Louis-0.20.0.5` stable baseline |
 | Upstream relationship | Selective review and backporting only |
 | Automatic updates | Louis `origin/main` only |
 
 Named custom providers can share one relay URL while retaining separate model
 lists, caches, API keys, API modes, headers, request options, and credential
 pools; model switching and restored sessions preserve that identity.
+Custom endpoint catalogs tolerate container-valued modality fields, and Gateway
+context pins survive runtime normalization of named custom providers.
 
 Release history and pending changes are tracked in
 [`LOUIS_RELEASE_NOTES.md`](LOUIS_RELEASE_NOTES.md) and

@@ -69,6 +69,11 @@ stored only in `custom_providers` rather than `model.base_url`. Gateway reset
 banners and session hygiene use the same route check. A different model,
 explicit endpoint URL, or identifiable named provider still clears the pin.
 
+When endpoint metadata is unavailable, `deepseek-v4.1-flash` and
+`deepseek-flash` use a 1,000,000-token fallback rather than the legacy DeepSeek
+family limit. A configured override or available endpoint metadata takes
+precedence over this fallback.
+
 ## Setting auxiliary models
 
 Click **Show auxiliary** to reveal the 11 task slots:

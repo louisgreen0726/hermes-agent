@@ -7,9 +7,9 @@ independently maintained derivative of Hermes Agent.
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.20.0.4`
-- Python package version: `0.20.0+Louis.4`
-- Desktop package version: `0.20.0-louis.4`
+- User-facing version: `Louis-0.20.0.5`
+- Python package version: `0.20.0+Louis.5`
+- Desktop package version: `0.20.0-louis.5`
 - Selectively integrated upstream baseline: Hermes Agent `0.20.0`
   (`2026.8.3`)
 - Source project: `https://github.com/NousResearch/hermes-agent`
@@ -22,7 +22,7 @@ source. It is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.20.0.4` (released 2026-08-14).
+- The versioned baseline is `Louis-0.20.0.5` (released 2026-10-14).
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -40,7 +40,11 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.20.0.4 baseline carries:
+The versioned 0.20.0.5 baseline carries:
+
+- Container-safe custom endpoint metadata parsing, 1M DeepSeek Flash fallbacks,
+  and named custom-provider context-pin retention in Gateway reset banners,
+  message context checks, and session hygiene, with same-relay provider isolation.
 
 - Telegram Native Guest Mode with MarkdownV2 rendering for ordinary Markdown
   and Bot API 10.1 rich delivery for tables and other advanced structures.
@@ -178,6 +182,7 @@ edit, but the impact review is still mandatory. The detailed checklist lives in
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.20.0.5](docs/releases/LOUIS_0.20.0.5.md)
 - [Louis Hermes Agent 0.20.0.4](docs/releases/LOUIS_0.20.0.4.md)
 - [Louis Hermes Agent 0.20.0.3](docs/releases/LOUIS_0.20.0.3.md)
 - [Louis Hermes Agent 0.20.0.2](docs/releases/LOUIS_0.20.0.2.md)
