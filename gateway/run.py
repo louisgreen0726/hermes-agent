@@ -12771,7 +12771,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             _msg_model_cfg.get("base_url"),
                             _msg_base_url,
                             _msg_model_cfg.get("provider"),
-                            _msg_runtime.get("provider"),
+                            _msg_runtime.get("requested_provider") or _msg_runtime.get("provider"),
                         ):
                             _msg_config_ctx = None
                     except Exception:
@@ -13367,7 +13367,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             _hyg_configured_base_url,
                             _hyg_base_url,
                             _hyg_configured_provider,
-                            _hyg_provider,
+                            _hyg_requested_provider or _hyg_provider,
                         ):
                             _hyg_config_context_length = None
                     except Exception:
@@ -14846,7 +14846,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     configured_base_url,
                     base_url,
                     configured_provider,
-                    provider,
+                    requested_provider or provider,
                 ):
                     config_context_length = None
             except Exception:

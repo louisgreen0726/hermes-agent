@@ -210,12 +210,30 @@ def _context_route_mismatch(
 
     if active_route:
         configured_routes = _provider_default_routes(configured_provider)
-        return not configured_routes or active_route not in configured_routes
+        if configured_routes:
+            return active_route not in configured_routes
+        # Named/custom URLs live outside model.base_url and have no catalog
+        # default. Runtime may flatten their provider id to plain custom.
+        return not (
+            active_provider
+            and _same_custom_runtime_provider(configured_provider, active_provider)
+        )
     return bool(
         configured_provider
         and active_provider
-        and configured_provider != active_provider
+        and not _same_custom_runtime_provider(configured_provider, active_provider)
     )
+
+
+def _same_custom_runtime_provider(configured: str, active: str) -> bool:
+    """Match flattened custom ids without equating two different named providers."""
+    if configured == active:
+        return True
+    named = {
+        p for p in (configured, active)
+        if p.startswith("custom:") and len(p) > len("custom:")
+    }
+    return bool(named) and "custom" in (configured, active)
 
 
 def _normalize_custom_provider_name(value: Any) -> str:

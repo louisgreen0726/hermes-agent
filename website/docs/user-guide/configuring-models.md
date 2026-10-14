@@ -63,6 +63,12 @@ resolution and auxiliary compression-model checks share this metadata parser.
 List- or mapping-valued fields such as `modalities.input` are not prices and do
 not invalidate the catalog; nested scalar pricing remains available.
 
+An explicit `model.context_length` override is kept when the configured named
+custom provider resolves to the generic `custom` runtime id, even if its URL is
+stored only in `custom_providers` rather than `model.base_url`. Gateway reset
+banners and session hygiene use the same route check. A different model,
+explicit endpoint URL, or identifiable named provider still clears the pin.
+
 ## Setting auxiliary models
 
 Click **Show auxiliary** to reveal the 11 task slots:

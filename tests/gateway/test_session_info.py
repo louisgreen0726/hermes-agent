@@ -87,6 +87,69 @@ class TestFormatSessionInfo:
             info = runner._format_session_info()
         assert "1.0M" in info
 
+    @pytest.mark.parametrize("requested_provider", [None, "custom:relay"])
+    def test_named_custom_context_pin_survives_runtime_flattening(
+        self, runner, tmp_path, requested_provider
+    ):
+        config = """
+model:
+  default: shared-model
+  provider: custom:relay
+  context_length: 1000000
+custom_providers:
+  - name: relay
+    base_url: https://relay.example/v1
+"""
+        p1, p2, p3 = _patch_info(
+            tmp_path, config, "shared-model",
+            {
+                "provider": "custom",
+                "requested_provider": requested_provider,
+                "base_url": "https://relay.example/v1",
+                "api_key": "k",
+            },
+        )
+        with p1, p2, p3, patch(
+            "agent.model_metadata.requests.get",
+            side_effect=AssertionError("Pinned context must not probe the endpoint"),
+        ) as probe:
+            info = runner._format_session_info()
+
+        assert "1.0M tokens (config)" in info
+        probe.assert_not_called()
+
+    def test_named_custom_context_pin_does_not_leak_to_same_url_sibling(
+        self, runner, tmp_path
+    ):
+        config = """
+model:
+  default: shared-model
+  provider: custom:large
+  context_length: 1000000
+custom_providers:
+  - name: large
+    base_url: https://relay.example/v1
+  - name: small
+    base_url: https://relay.example/v1
+    models:
+      shared-model:
+        context_length: 65536
+"""
+        p1, p2, p3 = _patch_info(
+            tmp_path, config, "shared-model",
+            {
+                "provider": "custom",
+                "requested_provider": "custom:small",
+                "base_url": "https://relay.example/v1",
+                "api_key": "k",
+            },
+        )
+        with p1, p2, p3:
+            info = runner._format_session_info()
+
+        assert "65K tokens (config)" in info
+        assert "1.0M" not in info
+
     def test_custom_context_is_scoped_to_active_runtime_route(self, runner, tmp_path):
         config = """
 model:
