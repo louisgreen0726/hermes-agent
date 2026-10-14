@@ -55,6 +55,14 @@ When you switch models **inside an active session** (Herm TUI model picker, `her
 Prompt caches are keyed to the model serving the request, so any mid-conversation model change — an explicit `/model` switch, an [automatic fallback](./features/fallback-providers.md), or a [credential-pool](./features/credential-pools.md) rotation onto a different account — means the next message re-reads the entire conversation at full input-token price instead of the cached (~75–90% discounted) rate. On a long session this one-time re-read can dwarf the per-token difference between the two models. Switch when you need to, but prefer doing it early in a conversation or right after starting a fresh session.
 :::
 
+### Custom endpoint context windows
+
+For a custom OpenAI-compatible endpoint, Hermes reads context limits from its
+`/models` catalog before using model-family defaults. Main-model context
+resolution and auxiliary compression-model checks share this metadata parser.
+List- or mapping-valued fields such as `modalities.input` are not prices and do
+not invalidate the catalog; nested scalar pricing remains available.
+
 ## Setting auxiliary models
 
 Click **Show auxiliary** to reveal the 11 task slots:

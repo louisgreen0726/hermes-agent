@@ -10,7 +10,10 @@ Coverage levels:
   Persistent cache       — save/load, corruption, update, provider isolation
 """
 
+import json
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 import yaml
@@ -696,6 +699,92 @@ class TestCodexOAuthContextLength:
         mock_get.assert_called_once()
         remaining = _yaml.safe_load(cache_file.read_text()).get("context_lengths", {})
         assert remaining.get(f"gpt-5.6-terra@{base_url}") == 372_000
+
+
+# =========================================================================
+# Custom-endpoint pricing and metadata parsing
+# =========================================================================
+
+
+class TestEndpointPricingContainers:
+    def test_modalities_are_not_pricing(self):
+        from agent.model_metadata import _extract_pricing
+
+        assert _extract_pricing({
+            "id": "model",
+            "modalities": {"input": ["text", "image"], "output": ["text"]},
+            "context_length": 1_000_000,
+        }) == {}
+
+    @pytest.mark.parametrize("non_price", [["text"], {"text": True}, None, ""])
+    def test_non_scalar_aliases_do_not_hide_nested_scalar_prices(self, non_price):
+        from agent.model_metadata import _extract_pricing
+
+        prices = {
+            "prompt": "0.000001",
+            "completion": 0.000002,
+            "request": 0,
+            "cache_read": 0.0,
+            "cache_write": "0.000003",
+        }
+        assert _extract_pricing({
+            "input": non_price,
+            "output": non_price,
+            "pricing": prices,
+        }) == prices
+
+    @pytest.mark.parametrize("context_length", [1_000_000, 524_288])
+    def test_real_models_endpoint_preserves_catalog_and_context(
+        self, context_length, monkeypatch
+    ):
+        from agent import model_metadata as mm
+
+        model_id = "workbuddy-ai/deepseek-v4.1-flash"
+        prices = {"prompt": "0.000001", "completion": "0.000002"}
+        payload = {"data": [
+            {
+                "id": model_id,
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "context_length": context_length,
+                "pricing": prices,
+            },
+            {"id": "other-model", "context_length": 65_536},
+        ]}
+
+        class ModelsHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/v1/models":
+                    self.send_error(404)
+                    return
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        monkeypatch.setattr(mm, "_endpoint_model_metadata_cache", {})
+        monkeypatch.setattr(mm, "_endpoint_model_metadata_cache_time", {})
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ModelsHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/v1"
+        try:
+            metadata = mm.fetch_endpoint_model_metadata(base_url)
+            assert metadata[model_id]["context_length"] == context_length
+            assert metadata[model_id]["pricing"] == prices
+            assert metadata["deepseek-v4.1-flash"] == metadata[model_id]
+            assert metadata["other-model"]["context_length"] == 65_536
+            assert mm.get_model_context_length(
+                model_id, base_url=base_url, provider="custom"
+            ) == context_length
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 # =========================================================================

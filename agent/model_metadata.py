@@ -941,9 +941,13 @@ def _extract_pricing(payload: Dict[str, Any]) -> Dict[str, Any]:
         pricing: Dict[str, Any] = {}
         for target, aliases in alias_map.items():
             for alias in aliases:
-                if alias in normalized and normalized[alias] not in {None, ""}:
-                    pricing[target] = normalized[alias]
-                    break
+                # Modality input/output keys may contain lists or dicts,
+                # not scalar prices; never hash them during alias matching.
+                if alias in normalized:
+                    value = normalized[alias]
+                    if isinstance(value, (int, float, str)) and value != "":
+                        pricing[target] = value
+                        break
         if pricing:
             return pricing
     return {}
