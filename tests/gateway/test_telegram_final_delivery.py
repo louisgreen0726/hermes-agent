@@ -1,5 +1,6 @@
-"""Regression coverage for Telegram final delivery after streamed edit failure."""
+"""Regression coverage for Telegram streamed final delivery."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,6 +10,7 @@ from gateway.config import PlatformConfig
 from gateway.platforms.base import SendResult
 from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
 from plugins.platforms.telegram.adapter import TelegramAdapter
+from telegram.error import BadRequest
 
 
 def _adapter() -> MagicMock:
@@ -21,6 +23,133 @@ def _adapter() -> MagicMock:
     adapter.send = AsyncMock()
     adapter.delete_message = AsyncMock(return_value=True)
     return adapter
+
+
+def _connected_telegram_adapter() -> TelegramAdapter:
+    adapter = TelegramAdapter(PlatformConfig(
+        enabled=True, token="test-token", extra={"rich_messages": True},
+    ))
+    message_ids = iter(range(1, 100))
+    adapter._bot = SimpleNamespace(
+        do_api_request=AsyncMock(return_value=SimpleNamespace(message_id=100)),
+        send_message=AsyncMock(
+            side_effect=lambda **kw: SimpleNamespace(message_id=next(message_ids)),
+        ),
+        send_message_draft=AsyncMock(return_value=True),
+        send_chat_action=AsyncMock(),
+        edit_message_text=AsyncMock(return_value=True),
+        delete_message=AsyncMock(return_value=True),
+    )
+    return adapter
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("send_result", [
+    SendResult(
+        success=True, message_id="1", raw_response={"message_ids": ["1", "2"]},
+    ),
+    SendResult(success=True, message_id="2", continuation_message_ids=("2",)),
+], ids=["send-message-ids", "continuation-message-ids"])
+async def test_chunked_final_first_send_does_not_refinalize(send_result):
+    """Re-editing the head with full text duplicates already-delivered tails."""
+    adapter = _connected_telegram_adapter()
+    adapter.send = AsyncMock(return_value=send_result)
+    adapter.edit_message = AsyncMock(return_value=SendResult(success=True))
+    consumer = GatewayStreamConsumer(adapter, "12345")
+    consumer.on_delta("line\n" * 1000)
+    consumer.finish()
+
+    await consumer.run()
+
+    adapter.send.assert_awaited_once()
+    adapter.edit_message.assert_not_awaited()
+    assert consumer.final_response_sent is True
+    assert consumer.final_content_delivered is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rows", [1, 60], ids=["short", "over-legacy-limit"])
+async def test_draft_final_first_send_preserves_rich_table(rows):
+    """A draft has no message id; its durable final should use rich sending."""
+    adapter = _connected_telegram_adapter()
+    text = "| Item | Detail |\n|---|---|\n" + "\n".join(
+        f"| entry{i:04d} | {'x' * 80} |" for i in range(rows)
+    )
+    draft_sent = asyncio.Event()
+
+    async def send_draft(**kwargs):
+        draft_sent.set()
+        return True
+
+    adapter._bot.send_message_draft.side_effect = send_draft
+    consumer = GatewayStreamConsumer(
+        adapter, "12345", StreamConsumerConfig(transport="auto", chat_type="dm"),
+        initial_reply_to_id="42",
+    )
+    consumer.on_delta(text)
+    task = asyncio.create_task(consumer.run())
+    try:
+        await asyncio.wait_for(draft_sent.wait(), timeout=5)
+        assert consumer.message_id is None
+        assert consumer.already_sent is False
+    finally:
+        consumer.finish()
+        await asyncio.wait_for(task, timeout=5)
+
+    rich_sends = [
+        call for call in adapter._bot.do_api_request.await_args_list
+        if call.args[0] == "sendRichMessage"
+    ]
+    assert len(rich_sends) == 1
+    payload = rich_sends[0].kwargs["api_kwargs"]
+    assert payload["rich_message"]["markdown"] == text
+    assert payload["reply_parameters"] == {"message_id": 42}
+    adapter._bot.send_message.assert_not_awaited()
+    adapter._bot.edit_message_text.assert_not_awaited()
+    assert consumer.final_response_sent is True
+    assert consumer.final_content_delivered is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rich_rejected", [False, True], ids=["plain", "rich-fallback"])
+async def test_final_first_send_legacy_chunks_deliver_each_row_once(rich_rejected):
+    """Real legacy splitting, including rich fallback, must not re-edit the head."""
+    adapter = _connected_telegram_adapter()
+    rows = [f"entry{i:04d} {'x' * 80}" for i in range(60)]
+    text = "\n".join(rows)
+    if rich_rejected:
+        text = "| Item | Detail |\n|---|---|\n" + "\n".join(
+            f"| {row} | detail |" for row in rows
+        )
+        adapter._bot.do_api_request.side_effect = BadRequest("can't parse rich message")
+    expected_chunks = adapter.truncate_message(
+        adapter.format_message(text), adapter.MAX_MESSAGE_LENGTH,
+    )
+    assert len(expected_chunks) > 1
+    consumer = GatewayStreamConsumer(adapter, "12345")
+    consumer.on_delta(text)
+    consumer.finish()
+
+    await consumer.run()
+
+    # A rejected rich send can create and retract a tiny placeholder first.
+    visible_chunks = [
+        call.kwargs["text"] for call in adapter._bot.send_message.await_args_list
+        if call.kwargs["text"] != "..."
+    ]
+    assert len(visible_chunks) == len(expected_chunks)
+    visible_text = "\n".join(visible_chunks)
+    for i in range(len(rows)):
+        assert visible_text.count(f"entry{i:04d}") == 1
+    adapter._bot.edit_message_text.assert_not_awaited()
+    if rich_rejected:
+        assert [
+            call.args[0] for call in adapter._bot.do_api_request.await_args_list
+        ] == ["sendRichMessage", "editMessageText"]
+    else:
+        adapter._bot.do_api_request.assert_not_awaited()
+    assert consumer.final_response_sent is True
+    assert consumer.final_content_delivered is True
 
 
 @pytest.mark.asyncio

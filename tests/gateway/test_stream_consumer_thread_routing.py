@@ -127,6 +127,7 @@ class TestInitialReplyToId:
         metadata = call_kwargs["metadata"]
         assert metadata["thread_id"] == "root_post_123"
         assert metadata["notify"] is True
+        assert not metadata.get("expect_edits")
         assert "delivery_kind" not in metadata
         assert "allow_flat_fallback" not in metadata
 

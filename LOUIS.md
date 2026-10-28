@@ -7,9 +7,9 @@ independently maintained derivative of Hermes Agent.
 
 - Product repository: `https://github.com/louisgreen0726/hermes-agent`
 - Release branch: `main`
-- User-facing version: `Louis-0.20.0.5`
-- Python package version: `0.20.0+Louis.5`
-- Desktop package version: `0.20.0-louis.5`
+- User-facing version: `Louis-0.20.0.6`
+- Python package version: `0.20.0+Louis.6`
+- Desktop package version: `0.20.0-louis.6`
 - Selectively integrated upstream baseline: Hermes Agent `0.20.0`
   (`2026.8.3`)
 - Source project: `https://github.com/NousResearch/hermes-agent`
@@ -22,7 +22,7 @@ source. It is not an official Nous Research release.
 
 ## Current channel
 
-- The versioned baseline is `Louis-0.20.0.5` (released 2026-10-14).
+- The versioned baseline is `Louis-0.20.0.6` (released 2026-10-28).
 - `main` is the production update channel and may contain validated unreleased
   changes after that baseline.
 - Pending changes and immutable versioned records are separated in the
@@ -40,7 +40,11 @@ Upstream changes are adopted only through an explicit integration branch, code r
 
 ## Capabilities
 
-The versioned 0.20.0.5 baseline carries:
+The versioned 0.20.0.6 baseline carries:
+
+- Duplicate-free Telegram streaming final delivery across chunked first sends,
+  preserving rich table rendering, progressive previews, and legacy splitting
+  for ordinary text or rich-message fallback.
 
 - Container-safe custom endpoint metadata parsing, 1M DeepSeek Flash fallbacks,
   and named custom-provider context-pin retention in Gateway reset banners,
@@ -182,6 +186,7 @@ edit, but the impact review is still mandatory. The detailed checklist lives in
 
 - [Louis release-notes index](LOUIS_RELEASE_NOTES.md)
 - [Unreleased changes](docs/releases/LOUIS_UNRELEASED.md)
+- [Louis Hermes Agent 0.20.0.6](docs/releases/LOUIS_0.20.0.6.md)
 - [Louis Hermes Agent 0.20.0.5](docs/releases/LOUIS_0.20.0.5.md)
 - [Louis Hermes Agent 0.20.0.4](docs/releases/LOUIS_0.20.0.4.md)
 - [Louis Hermes Agent 0.20.0.3](docs/releases/LOUIS_0.20.0.3.md)

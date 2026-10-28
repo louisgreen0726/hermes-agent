@@ -243,7 +243,7 @@ class GatewayStreamConsumer:
         self._last_edit_time = 0.0
         self._last_sent_text = ""   # Track last-sent text to skip redundant edits
         # True when the most recent _send_or_edit split-and-delivered across
-        # continuation messages (the adapter adopted a new message id).
+        # continuation messages, including a chunked final first send.
         self._last_edit_overflowed = False
         self._fallback_final_send = False
         self._fallback_prefix = ""
@@ -973,12 +973,10 @@ class GatewayStreamConsumer:
                             # final accumulated content.  Skip the redundant
                             # final edit for adapters that don't need an
                             # explicit finalize signal, and for any adapter
-                            # when that edit split-and-delivered across
-                            # continuations: the split edit carried
-                            # finalize=True itself, and re-finalizing with
-                            # the full text would overflow-split again into
-                            # the adopted continuation, duplicating chunks
-                            # on screen.
+                            # when that send/edit split-and-delivered across
+                            # continuations: it carried finalize=True itself,
+                            # and re-finalizing the full text can duplicate
+                            # content already delivered in sibling messages.
                             self._final_response_sent = True
                             self._final_content_delivered = True
                         elif self._message_id:
@@ -1782,6 +1780,14 @@ class GatewayStreamConsumer:
             for mid in (raw.get("message_ids") or ()):
                 self._track_preview_id(mid)
 
+    @staticmethod
+    def _result_was_chunked(result: Any) -> bool:
+        """Recognize both send and edit continuation-result contracts."""
+        if getattr(result, "continuation_message_ids", None):
+            return True
+        raw = getattr(result, "raw_response", None)
+        return isinstance(raw, dict) and len(raw.get("message_ids") or ()) > 1
+
     def _adapter_prefers_fresh_final(self, text: str) -> bool:
         """Return True when the adapter would rather finalize a streamed reply
         by sending a fresh message and deleting the preview than by editing the
@@ -2226,7 +2232,8 @@ class GatewayStreamConsumer:
                     reply_to=self._initial_reply_to_id,
                     metadata=self._metadata_for_send(
                         final=finalize,
-                        expect_edits=True,
+                        # Only previews need the editable legacy send path.
+                        expect_edits=not finalize,
                     ),
                 )
                 if result.success:
@@ -2243,6 +2250,10 @@ class GatewayStreamConsumer:
                         self._edit_supported = False
                     self._already_sent = True
                     self._last_sent_text = text
+                    if finalize and is_turn_final and self._result_was_chunked(result):
+                        # Re-finalizing the head with full rich text would
+                        # leave already-delivered continuation tails duplicated.
+                        self._last_edit_overflowed = True
                     if not result.message_id:
                         self._fallback_prefix = self._visible_prefix()
                         self._fallback_final_send = True

@@ -14,6 +14,7 @@ Release exists.
 
 ## Versioned Baselines
 
+- [Louis Hermes Agent 0.20.0.6](docs/releases/LOUIS_0.20.0.6.md) - 2026-10-28
 - [Louis Hermes Agent 0.20.0.5](docs/releases/LOUIS_0.20.0.5.md) - 2026-10-14
 - [Louis Hermes Agent 0.20.0.4](docs/releases/LOUIS_0.20.0.4.md) - 2026-08-14
 - [Louis Hermes Agent 0.20.0.3](docs/releases/LOUIS_0.20.0.3.md) - 2026-08-07
